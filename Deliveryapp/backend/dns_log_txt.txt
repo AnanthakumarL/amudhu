@@ -1,0 +1,1 @@
+{"Status":0,"TC":false,"RD":true,"RA":true,"AD":false,"CD":false,"Question":[{"name":"amudhu-ice.tnpziik.mongodb.net.","type":16}],"Answer":[{"name":"amudhu-ice.tnpziik.mongodb.net.","type":16,"TTL":60,"data":"authSource=admin\u0026replicaSet=atlas-8g6dqf-shard-0"}],"Comment":"Response from 205.251.194.249."}

@@ -1,0 +1,5 @@
+# Root-only local virtual environment
+.venv/
+
+# Environment files (keep *.example checked in)
+.env

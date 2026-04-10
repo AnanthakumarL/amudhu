@@ -1,0 +1,20 @@
+{
+  "name": "deliveryapp-backend",
+  "version": "1.0.0",
+  "description": "Node/Express backend for DeliveryApp with MongoDB Atlas",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "mongoose": "^8.3.4",
+    "twilio": "^5.13.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  }
+}
