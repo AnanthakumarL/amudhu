@@ -1,15 +1,15 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from fastapi import APIRouter, Depends, status
 
-from app.db.mongo_client import get_mongo_db
+from app.db.database import get_db
 from app.models.auth import AuthUserOut, LoginIn, LoginOtpRequestIn, LoginOtpVerifyIn, OtpRequestIn, OtpRequestOut, SignupVerifyIn
 from app.services.auth_service import AuthService
 
 router = APIRouter()
 
 
-def get_service(db=Depends(get_mongo_db)) -> AuthService:
+def get_service(db=Depends(get_db)) -> AuthService:
     return AuthService(db)
 
 
@@ -36,3 +36,4 @@ async def request_login_otp(item: LoginOtpRequestIn, service: AuthService = Depe
 @router.post("/otp/verify", response_model=AuthUserOut, status_code=status.HTTP_200_OK, tags=["Auth"])
 async def verify_login_otp(item: LoginOtpVerifyIn, service: AuthService = Depends(get_service)):
     return service.verify_login_otp(item)
+

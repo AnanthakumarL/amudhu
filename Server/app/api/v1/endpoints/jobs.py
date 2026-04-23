@@ -1,8 +1,8 @@
-import math
+﻿import math
 
 from fastapi import APIRouter, Depends, Query, status
 
-from app.db.mongo_client import get_mongo_db
+from app.db.database import get_db
 from app.models.common import MessageResponse, PaginatedResponse
 from app.models.job import Job, JobCreate, JobUpdate
 from app.services.job_service import JobService
@@ -10,7 +10,7 @@ from app.services.job_service import JobService
 router = APIRouter()
 
 
-def get_service(db=Depends(get_mongo_db)):
+def get_service(db=Depends(get_db)):
     return JobService(db)
 
 
@@ -64,3 +64,4 @@ async def delete_job(
 ):
     service.delete(job_id)
     return MessageResponse(message="Job deleted successfully", id=job_id)
+

@@ -1,8 +1,8 @@
-import math
+﻿import math
 
 from fastapi import APIRouter, Depends, Query, status
 
-from app.db.mongo_client import get_mongo_db
+from app.db.database import get_db
 from app.models.common import MessageResponse, PaginatedResponse
 from app.models.section import Section, SectionCreate, SectionUpdate
 from app.services.section_service import SectionService
@@ -10,7 +10,7 @@ from app.services.section_service import SectionService
 router = APIRouter()
 
 
-def get_service(db=Depends(get_mongo_db)):
+def get_service(db=Depends(get_db)):
     return SectionService(db)
 
 
@@ -69,3 +69,4 @@ async def delete_section(
     """Delete section"""
     service.delete_section(section_id)
     return MessageResponse(message="Section deleted successfully", id=section_id)
+

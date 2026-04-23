@@ -6,6 +6,7 @@ from app.api.v1.endpoints import (
     auth,
     categories,
     delivery_managements,
+    delivery_users,
     health,
     jobs,
     orders,
@@ -33,6 +34,7 @@ api_router.include_router(payments.router, prefix="/payments", tags=["Payments"]
 api_router.include_router(production_managements.router, prefix="/production-managements", tags=["Admin - Production Management"])
 api_router.include_router(production_users.router, prefix="/production-users", tags=["Admin - Production Users"])
 api_router.include_router(delivery_managements.router, prefix="/delivery-managements", tags=["Admin - Delivery Management"])
+api_router.include_router(delivery_users.router, prefix="/delivery-users", tags=["Admin - Delivery Users"])
 api_router.include_router(accounts.router, prefix="/accounts", tags=["Admin - Accounts"])
 api_router.include_router(jobs.router, prefix="/jobs", tags=["Admin - Jobs"])
 api_router.include_router(applications.router, prefix="/applications", tags=["Admin - Applications"])

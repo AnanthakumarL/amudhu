@@ -1,8 +1,8 @@
-import math
+﻿import math
 
 from fastapi import APIRouter, Depends, Query, status
 
-from app.db.mongo_client import get_mongo_db
+from app.db.database import get_db
 from app.models.category import Category, CategoryCreate, CategoryUpdate
 from app.models.common import MessageResponse, PaginatedResponse
 from app.services.category_service import CategoryService
@@ -10,7 +10,7 @@ from app.services.category_service import CategoryService
 router = APIRouter()
 
 
-def get_service(db=Depends(get_mongo_db)):
+def get_service(db=Depends(get_db)):
     return CategoryService(db)
 
 
@@ -69,3 +69,4 @@ async def delete_category(
     """Delete category"""
     service.delete_category(category_id)
     return MessageResponse(message="Category deleted successfully", id=category_id)
+

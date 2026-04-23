@@ -1,8 +1,8 @@
-import math
+﻿import math
 
 from fastapi import APIRouter, Depends, Query, status
 
-from app.db.mongo_client import get_mongo_db
+from app.db.database import get_db
 from app.models.common import MessageResponse, PaginatedResponse
 from app.models.production_user import ProductionUser, ProductionUserCreate, ProductionUserUpdate
 from app.services.production_user_service import ProductionUserService
@@ -10,7 +10,7 @@ from app.services.production_user_service import ProductionUserService
 router = APIRouter()
 
 
-def get_service(db=Depends(get_mongo_db)) -> ProductionUserService:
+def get_service(db=Depends(get_db)) -> ProductionUserService:
     return ProductionUserService(db)
 
 
@@ -68,3 +68,4 @@ async def delete_production_user(
 ):
     service.delete(user_id)
     return MessageResponse(message="Production user deleted successfully", id=user_id)
+

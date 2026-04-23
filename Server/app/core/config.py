@@ -13,33 +13,38 @@ class Settings(BaseSettings):
     API_V1_PREFIX: str = "/api/v1"
     PORT: int = 7999
 
-    # Weaviate
-    WEAVIATE_ENABLED: bool = True
-    WEAVIATE_HOST: str = "localhost"
-    WEAVIATE_PORT: int = 8080
-    WEAVIATE_SCHEME: str = "http"
+    # Supabase
+    SUPABASE_URL: str = ""
+    SUPABASE_SERVICE_ROLE_KEY: str = ""
+    SUPABASE_STORAGE_BUCKET: str = "product-images"
 
-    # MongoDB (Atlas)
-    # Example: mongodb+srv://USER:PASS@cluster0.xxxxx.mongodb.net/?retryWrites=true&w=majority
-    MONGODB_URI: str = "mongodb://localhost:27017"
-    MONGODB_DB: str = "amudhu"
+    # PostgreSQL (Supabase connection string)
+    # Format: postgresql://postgres:[PASSWORD]@db.[PROJECT_REF].supabase.co:5432/postgres
+    DATABASE_URL: str = "postgresql://postgres:password@localhost:5432/amudhu"
 
     # CORS - Use string in .env, will be split by comma
     CORS_ORIGINS: str = "http://localhost:3000,http://localhost:3001,http://localhost:5173,http://localhost:5174,http://localhost:5175,http://localhost:7999"
     # Optional regex (Starlette) to allow matching origins, useful for Vite dev ports
-    CORS_ORIGIN_REGEX: str | None = r"^http://localhost:\d+$"
+    CORS_ORIGIN_REGEX: str | None = (
+        r"^http://(localhost|127\.0\.0\.1|"
+        r"10(?:\.\d{1,3}){3}|"
+        r"192\.168(?:\.\d{1,3}){2}|"
+        r"172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2})"
+        r"(?::\d+)?$"
+    )
 
     # Pagination
     DEFAULT_PAGE_SIZE: int = 20
     MAX_PAGE_SIZE: int = 100
 
-    # Stripe
-    STRIPE_SECRET_KEY: str | None = None
-    # Webhook signing secret (starts with whsec_...) for /payments/webhook
-    STRIPE_WEBHOOK_SECRET: str | None = None
-    # Currency used for Stripe Checkout line items
-    STRIPE_CURRENCY: str = "inr"
-    # Client base URL used to build success/cancel URLs for Stripe Checkout
+    # Razorpay
+    RAZORPAY_KEY_ID: str | None = None
+    RAZORPAY_KEY_SECRET: str | None = None
+    RAZORPAY_WEBHOOK_SECRET: str | None = None
+    RAZORPAY_STATIC_QR_ID: str | None = None
+    # Currency for Razorpay orders
+    RAZORPAY_CURRENCY: str = "INR"
+    # Client base URL used to build redirect URLs after payment
     CLIENT_URL: str = "http://localhost:5173"
 
     def get_cors_origins(self) -> list[str]:

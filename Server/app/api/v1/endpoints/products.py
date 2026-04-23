@@ -1,9 +1,9 @@
-import math
+﻿import math
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import Response
 
-from app.db.mongo_client import get_mongo_db
+from app.db.database import get_db
 from app.core.config import get_settings
 from app.core.exceptions import NotFoundException
 from app.models.common import MessageResponse, PaginatedResponse
@@ -14,7 +14,7 @@ router = APIRouter()
 settings = get_settings()
 
 
-def get_service(db=Depends(get_mongo_db)):
+def get_service(db=Depends(get_db)):
     return ProductService(db)
 
 
@@ -200,3 +200,4 @@ async def delete_product(
     """Delete product"""
     service.delete_product(product_id)
     return MessageResponse(message="Product deleted successfully", id=product_id)
+

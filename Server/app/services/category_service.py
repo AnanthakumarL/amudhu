@@ -1,134 +1,102 @@
 from datetime import datetime
 
-from bson import ObjectId
-from pymongo import ReturnDocument
-from pymongo.collection import Collection
-from pymongo.database import Database
+from sqlalchemy.orm import Session
 
 from app.core.exceptions import DatabaseException, NotFoundException
 from app.core.logging import get_logger
+from app.db.orm_models import CategoryORM
 from app.models.category import Category, CategoryCreate, CategoryUpdate
-from app.utils.helpers import filter_none_values, generate_slug
+from app.utils.helpers import filter_none_values
 
 logger = get_logger(__name__)
 
 
+def _to_category(row: CategoryORM) -> Category:
+    return Category(
+        id=str(row.id),
+        name=row.name,
+        description=row.description,
+        section_id=str(row.section_id) if row.section_id else None,
+        parent_category_id=str(row.parent_category_id) if row.parent_category_id else None,
+        is_active=row.is_active,
+        order=row.order,
+        slug=row.slug,
+        image_url=row.image_url,
+        created_at=row.created_at.isoformat() if row.created_at else "",
+        updated_at=row.updated_at.isoformat() if row.updated_at else "",
+    )
+
+
 class CategoryService:
-    """Service for category operations"""
-
-    def __init__(self, db: Database):
+    def __init__(self, db: Session):
         self.db = db
-        self.collection: Collection = db["categories"]
 
-    @staticmethod
-    def _to_object_id(value: str) -> ObjectId:
+    def create(self, item: CategoryCreate) -> Category:
         try:
-            return ObjectId(value)
-        except Exception:
-            raise NotFoundException(f"Category with ID {value} not found")
-
-    @staticmethod
-    def _now() -> str:
-        return datetime.utcnow().isoformat()
-
-    @staticmethod
-    def _doc_to_category(doc: dict) -> Category:
-        doc = doc.copy()
-        doc["id"] = str(doc.pop("_id"))
-        return Category(**doc)
-
-    def create_category(self, category: CategoryCreate) -> Category:
-        """Create a new category"""
-        try:
-            now = self._now()
-            category_dict = category.model_dump()
-
-            # Generate slug if not provided
-            if not category_dict.get("slug"):
-                category_dict["slug"] = generate_slug(category_dict["name"])
-
-            category_dict["created_at"] = now
-            category_dict["updated_at"] = now
-
-            result = self.collection.insert_one(category_dict)
-            return Category(id=str(result.inserted_id), **category_dict)
+            row = CategoryORM(**item.model_dump())
+            self.db.add(row)
+            self.db.commit()
+            self.db.refresh(row)
+            return _to_category(row)
         except Exception as e:
+            self.db.rollback()
             logger.error(f"Error creating category: {e}")
             raise DatabaseException(f"Failed to create category: {e!s}")
 
-    def get_category(self, category_id: str) -> Category:
-        """Get category by ID"""
+    def get(self, category_id: str) -> Category:
         try:
-            doc = self.collection.find_one({"_id": self._to_object_id(category_id)})
-            if not doc:
-                raise NotFoundException(f"Category with ID {category_id} not found")
-            return self._doc_to_category(doc)
+            row = self.db.query(CategoryORM).filter(CategoryORM.id == category_id).first()
+            if not row:
+                raise NotFoundException(f"Category {category_id} not found")
+            return _to_category(row)
         except NotFoundException:
             raise
         except Exception as e:
             logger.error(f"Error fetching category: {e}")
             raise DatabaseException(f"Failed to fetch category: {e!s}")
 
-    def list_categories(self, page: int = 1, page_size: int = 20, parent_id: str | None = None) -> tuple:
-        """List all categories with pagination"""
+    def list(self, page: int = 1, page_size: int = 20, section_id: str | None = None) -> tuple:
         try:
-            query_filter = {}
-            if parent_id is not None:
-                query_filter["parent_category_id"] = parent_id
-
-            total = self.collection.count_documents(query_filter)
-            cursor = (
-                self.collection.find(query_filter)
-                .skip((page - 1) * page_size)
-                .limit(page_size)
-            )
-
-            categories = [self._doc_to_category(doc) for doc in cursor]
-            return categories, total
+            q = self.db.query(CategoryORM)
+            if section_id:
+                q = q.filter(CategoryORM.section_id == section_id)
+            q = q.order_by(CategoryORM.order.asc(), CategoryORM.created_at.desc())
+            total = q.count()
+            rows = q.offset((page - 1) * page_size).limit(page_size).all()
+            return [_to_category(r) for r in rows], total
         except Exception as e:
             logger.error(f"Error listing categories: {e}")
             raise DatabaseException(f"Failed to list categories: {e!s}")
 
-    def update_category(self, category_id: str, category_update: CategoryUpdate) -> Category:
-        """Update category"""
+    def update(self, category_id: str, item: CategoryUpdate) -> Category:
         try:
-            oid = self._to_object_id(category_id)
-            update_data = filter_none_values(category_update.model_dump())
-
-            if "name" in update_data and not update_data.get("slug"):
-                update_data["slug"] = generate_slug(update_data["name"])
-
-            if not update_data:
-                doc = self.collection.find_one({"_id": oid})
-                if not doc:
-                    raise NotFoundException(f"Category with ID {category_id} not found")
-                return self._doc_to_category(doc)
-
-            update_data["updated_at"] = self._now()
-            updated = self.collection.find_one_and_update(
-                {"_id": oid},
-                {"$set": update_data},
-                return_document=ReturnDocument.AFTER,
-            )
-            if not updated:
-                raise NotFoundException(f"Category with ID {category_id} not found")
-            return self._doc_to_category(updated)
+            row = self.db.query(CategoryORM).filter(CategoryORM.id == category_id).first()
+            if not row:
+                raise NotFoundException(f"Category {category_id} not found")
+            for k, v in filter_none_values(item.model_dump()).items():
+                setattr(row, k, v)
+            row.updated_at = datetime.utcnow()
+            self.db.commit()
+            self.db.refresh(row)
+            return _to_category(row)
         except NotFoundException:
             raise
         except Exception as e:
+            self.db.rollback()
             logger.error(f"Error updating category: {e}")
             raise DatabaseException(f"Failed to update category: {e!s}")
 
-    def delete_category(self, category_id: str) -> bool:
-        """Delete category"""
+    def delete(self, category_id: str) -> bool:
         try:
-            oid = self._to_object_id(category_id)
-            result = self.collection.delete_one({"_id": oid})
-            if result.deleted_count == 0:
-                raise NotFoundException(f"Category with ID {category_id} not found")
+            row = self.db.query(CategoryORM).filter(CategoryORM.id == category_id).first()
+            if not row:
+                raise NotFoundException(f"Category {category_id} not found")
+            self.db.delete(row)
+            self.db.commit()
             return True
         except NotFoundException:
             raise
         except Exception as e:
+            self.db.rollback()
             logger.error(f"Error deleting category: {e}")
             raise DatabaseException(f"Failed to delete category: {e!s}")

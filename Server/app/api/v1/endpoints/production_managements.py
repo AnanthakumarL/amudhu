@@ -1,8 +1,8 @@
-import math
+﻿import math
 
 from fastapi import APIRouter, Depends, Query, status
 
-from app.db.mongo_client import get_mongo_db
+from app.db.database import get_db
 from app.models.common import MessageResponse, PaginatedResponse
 from app.models.production_management import (
     ProductionManagement,
@@ -14,7 +14,7 @@ from app.services.production_management_service import ProductionManagementServi
 router = APIRouter()
 
 
-def get_service(db=Depends(get_mongo_db)):
+def get_service(db=Depends(get_db)):
     return ProductionManagementService(db)
 
 
@@ -68,3 +68,4 @@ async def delete_production_management(
 ):
     service.delete(item_id)
     return MessageResponse(message="Production management deleted successfully", id=item_id)
+

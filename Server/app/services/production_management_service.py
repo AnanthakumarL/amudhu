@@ -1,123 +1,89 @@
-from datetime import datetime
-
-from bson import ObjectId
-from pymongo import ReturnDocument
-from pymongo.collection import Collection
-from pymongo.database import Database
-
+﻿from datetime import datetime
+from sqlalchemy.orm import Session
 from app.core.exceptions import DatabaseException, NotFoundException
 from app.core.logging import get_logger
-from app.models.production_management import (
-    ProductionManagement,
-    ProductionManagementCreate,
-    ProductionManagementUpdate,
-)
+from app.db.orm_models import ProductionManagementORM
+from app.models.production_management import ProductionManagement, ProductionManagementCreate, ProductionManagementUpdate
 from app.utils.helpers import filter_none_values
 
 logger = get_logger(__name__)
 
+def _to_pm(row) -> ProductionManagement:
+    return ProductionManagement(
+        id=str(row.id), name=row.name,
+        production_date=row.production_date.isoformat() if row.production_date else None,
+        status=row.status, quantity=row.quantity,
+        product_id=str(row.product_id) if row.product_id else None,
+        notes=row.notes, attributes=row.attributes or {},
+        created_at=row.created_at.isoformat() if row.created_at else "",
+        updated_at=row.updated_at.isoformat() if row.updated_at else "",
+    )
 
 class ProductionManagementService:
-    """Service for production management operations."""
-
-    def __init__(self, db: Database):
+    def __init__(self, db: Session):
         self.db = db
-        self.collection: Collection = db["production_managements"]
-
-    @staticmethod
-    def _to_object_id(value: str) -> ObjectId:
-        try:
-            return ObjectId(value)
-        except Exception:
-            raise NotFoundException(f"Production management with ID {value} not found")
-
-    @staticmethod
-    def _now() -> str:
-        return datetime.utcnow().isoformat()
-
-    @staticmethod
-    def _doc_to_item(doc: dict) -> ProductionManagement:
-        doc = doc.copy()
-        doc["id"] = str(doc.pop("_id"))
-        return ProductionManagement(**doc)
 
     def create(self, item: ProductionManagementCreate) -> ProductionManagement:
         try:
-            now = self._now()
-            payload = item.model_dump()
-            payload["created_at"] = now
-            payload["updated_at"] = now
-
-            result = self.collection.insert_one(payload)
-            return ProductionManagement(id=str(result.inserted_id), **payload)
+            row = ProductionManagementORM(**item.model_dump())
+            self.db.add(row)
+            self.db.commit()
+            self.db.refresh(row)
+            return _to_pm(row)
         except Exception as e:
-            logger.error(f"Error creating production management: {e}")
+            self.db.rollback()
             raise DatabaseException(f"Failed to create production management: {e!s}")
 
-    def get(self, item_id: str) -> ProductionManagement:
+    def get(self, pm_id: str) -> ProductionManagement:
         try:
-            doc = self.collection.find_one({"_id": self._to_object_id(item_id)})
-            if not doc:
-                raise NotFoundException(f"Production management with ID {item_id} not found")
-            return self._doc_to_item(doc)
+            row = self.db.query(ProductionManagementORM).filter(ProductionManagementORM.id == pm_id).first()
+            if not row:
+                raise NotFoundException(f"Production management {pm_id} not found")
+            return _to_pm(row)
         except NotFoundException:
             raise
         except Exception as e:
-            logger.error(f"Error fetching production management: {e}")
             raise DatabaseException(f"Failed to fetch production management: {e!s}")
 
-    def list(self, page: int = 1, page_size: int = 20, status: str | None = None) -> tuple[list[ProductionManagement], int]:
+    def list(self, page=1, page_size=20, status=None) -> tuple:
         try:
-            query_filter: dict = {}
+            q = self.db.query(ProductionManagementORM)
             if status:
-                query_filter["status"] = status
-
-            total = self.collection.count_documents(query_filter)
-            cursor = (
-                self.collection.find(query_filter)
-                .sort("production_date", -1)
-                .skip((page - 1) * page_size)
-                .limit(page_size)
-            )
-            items = [self._doc_to_item(doc) for doc in cursor]
-            return items, total
+                q = q.filter(ProductionManagementORM.status == status)
+            q = q.order_by(ProductionManagementORM.created_at.desc())
+            total = q.count()
+            rows = q.offset((page - 1) * page_size).limit(page_size).all()
+            return [_to_pm(r) for r in rows], total
         except Exception as e:
-            logger.error(f"Error listing production managements: {e}")
             raise DatabaseException(f"Failed to list production managements: {e!s}")
 
-    def update(self, item_id: str, update: ProductionManagementUpdate) -> ProductionManagement:
+    def update(self, pm_id: str, item: ProductionManagementUpdate) -> ProductionManagement:
         try:
-            oid = self._to_object_id(item_id)
-            update_data = filter_none_values(update.model_dump())
-
-            if not update_data:
-                return self.get(item_id)
-
-            update_data["updated_at"] = self._now()
-
-            updated = self.collection.find_one_and_update(
-                {"_id": oid},
-                {"$set": update_data},
-                return_document=ReturnDocument.AFTER,
-            )
-            if not updated:
-                raise NotFoundException(f"Production management with ID {item_id} not found")
-            return self._doc_to_item(updated)
+            row = self.db.query(ProductionManagementORM).filter(ProductionManagementORM.id == pm_id).first()
+            if not row:
+                raise NotFoundException(f"Production management {pm_id} not found")
+            for k, v in filter_none_values(item.model_dump()).items():
+                setattr(row, k, v)
+            row.updated_at = datetime.utcnow()
+            self.db.commit()
+            self.db.refresh(row)
+            return _to_pm(row)
         except NotFoundException:
             raise
         except Exception as e:
-            logger.error(f"Error updating production management: {e}")
+            self.db.rollback()
             raise DatabaseException(f"Failed to update production management: {e!s}")
 
-    def delete(self, item_id: str) -> bool:
+    def delete(self, pm_id: str) -> bool:
         try:
-            oid = self._to_object_id(item_id)
-            result = self.collection.delete_one({"_id": oid})
-            if result.deleted_count == 0:
-                raise NotFoundException(f"Production management with ID {item_id} not found")
+            row = self.db.query(ProductionManagementORM).filter(ProductionManagementORM.id == pm_id).first()
+            if not row:
+                raise NotFoundException(f"Production management {pm_id} not found")
+            self.db.delete(row)
+            self.db.commit()
             return True
         except NotFoundException:
             raise
         except Exception as e:
-            logger.error(f"Error deleting production management: {e}")
+            self.db.rollback()
             raise DatabaseException(f"Failed to delete production management: {e!s}")

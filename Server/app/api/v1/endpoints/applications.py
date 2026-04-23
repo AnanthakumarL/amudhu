@@ -1,8 +1,8 @@
-import math
+﻿import math
 
 from fastapi import APIRouter, Depends, Query, status
 
-from app.db.mongo_client import get_mongo_db
+from app.db.database import get_db
 from app.models.application import Application, ApplicationCreate, ApplicationUpdate
 from app.models.common import MessageResponse, PaginatedResponse
 from app.services.application_service import ApplicationService
@@ -10,7 +10,7 @@ from app.services.application_service import ApplicationService
 router = APIRouter()
 
 
-def get_service(db=Depends(get_mongo_db)):
+def get_service(db=Depends(get_db)):
     return ApplicationService(db)
 
 
@@ -65,3 +65,4 @@ async def delete_application(
 ):
     service.delete(application_id)
     return MessageResponse(message="Application deleted successfully", id=application_id)
+

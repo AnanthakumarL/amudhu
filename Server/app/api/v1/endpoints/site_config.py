@@ -1,13 +1,13 @@
-from fastapi import APIRouter, Depends, status
+﻿from fastapi import APIRouter, Depends, status
 
-from app.db.mongo_client import get_mongo_db
+from app.db.database import get_db
 from app.models.site_config import SiteConfig, SiteConfigCreate, SiteConfigUpdate
 from app.services.site_config_service import SiteConfigService
 
 router = APIRouter()
 
 
-def get_service(db=Depends(get_mongo_db)):
+def get_service(db=Depends(get_db)):
     return SiteConfigService(db)
 
 
@@ -33,3 +33,4 @@ async def update_site_config(
 ):
     """Update site configuration"""
     return service.update_config(config)
+

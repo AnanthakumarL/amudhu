@@ -1,8 +1,8 @@
-import math
+﻿import math
 
 from fastapi import APIRouter, Depends, Query
 
-from app.db.mongo_client import get_mongo_db
+from app.db.database import get_db
 from app.models.auth import AuthUserOut
 from app.models.common import PaginatedResponse
 from app.services.user_service import UserService
@@ -10,7 +10,7 @@ from app.services.user_service import UserService
 router = APIRouter()
 
 
-def get_service(db=Depends(get_mongo_db)) -> UserService:
+def get_service(db=Depends(get_db)) -> UserService:
     return UserService(db)
 
 
@@ -36,3 +36,4 @@ async def list_users(
         total_pages=math.ceil(total / page_size) if total > 0 else 0,
         data=items,
     )
+

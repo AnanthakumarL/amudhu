@@ -1,8 +1,8 @@
-import math
+﻿import math
 
 from fastapi import APIRouter, Depends, Query, status
 
-from app.db.mongo_client import get_mongo_db
+from app.db.database import get_db
 from app.models.common import MessageResponse, PaginatedResponse
 from app.models.order import (
     Order,
@@ -16,7 +16,7 @@ from app.services.order_service import OrderService
 router = APIRouter()
 
 
-def get_service(db=Depends(get_mongo_db)):
+def get_service(db=Depends(get_db)):
     return OrderService(db)
 
 
@@ -102,3 +102,4 @@ async def delete_order(
     """Delete order"""
     service.delete_order(order_id)
     return MessageResponse(message="Order deleted successfully", id=order_id)
+

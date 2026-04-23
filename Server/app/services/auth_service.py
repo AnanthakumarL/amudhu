@@ -1,269 +1,191 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import hashlib
 import re
 import secrets
 from datetime import datetime, timedelta
 
-from bson import ObjectId
-from pymongo.collection import Collection
-from pymongo.database import Database
+from sqlalchemy.orm import Session
 
 from app.core.exceptions import BadRequestException, ConflictException, DatabaseException, NotFoundException
 from app.core.logging import get_logger
 from app.core.config import get_settings
 from app.core.security import hash_password, verify_password
+from app.db.orm_models import DeliveryUserORM, OtpRequestORM, ProductionUserORM, UserORM
 from app.models.auth import AuthUserOut, LoginIn, LoginOtpRequestIn, LoginOtpVerifyIn, OtpRequestIn, OtpRequestOut, SignupVerifyIn
 
 logger = get_logger(__name__)
 settings = get_settings()
 
 
-def _now() -> str:
-    return datetime.utcnow().isoformat()
+def _now_dt():
+    return datetime.utcnow()
 
-
-def _normalize_identifier(identifier: str) -> str:
-    return identifier.strip().lower()
-
+def _normalize_identifier(v: str) -> str:
+    return v.strip().lower()
 
 def _normalize_phone(phone: str) -> str:
-    # Keep digits and leading + (if any), remove spaces/dashes
     phone = phone.strip()
     phone = re.sub(r"[\s-]", "", phone)
     return phone
 
-
 def _sha256(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
+def _user_out(row, id_override=None) -> AuthUserOut:
+    return AuthUserOut(
+        id=id_override or str(row.id),
+        name=row.name,
+        identifier=row.identifier,
+        is_active=row.is_active,
+        created_at=row.created_at.isoformat() if row.created_at else "",
+        updated_at=row.updated_at.isoformat() if row.updated_at else "",
+    )
+
 
 class AuthService:
-    def __init__(self, db: Database):
+    def __init__(self, db: Session):
         self.db = db
-        self.users: Collection = db["users"]
-        self.otp_requests: Collection = db["otp_requests"]
-
-    @staticmethod
-    def _doc_to_user(doc: dict) -> AuthUserOut:
-        doc = doc.copy()
-        doc["id"] = str(doc.pop("_id"))
-        doc.pop("password_hash", None)
-        return AuthUserOut(**doc)
 
     def request_signup_otp(self, item: OtpRequestIn) -> OtpRequestOut:
         try:
             identifier = _normalize_identifier(item.identifier)
             otp = "000000" if settings.DEBUG else f"{secrets.randbelow(1_000_000):06d}"
-
-            now_dt = datetime.utcnow()
+            now_dt = _now_dt()
             expires_dt = now_dt + timedelta(minutes=5)
-
-            payload = {
-                "purpose": "signup",
-                "identifier": identifier,
-                "otp_hash": _sha256(otp),
-                "attempts": 0,
-                "is_used": False,
-                "created_at": now_dt.isoformat(),
-                "expires_at": expires_dt.isoformat(),
-                "updated_at": now_dt.isoformat(),
-            }
-
-            result = self.otp_requests.insert_one(payload)
-
-            resp = OtpRequestOut(request_id=str(result.inserted_id), expires_in_seconds=5 * 60)
+            row = OtpRequestORM(purpose="signup", identifier=identifier,
+                                otp_hash=_sha256(otp), attempts=0, is_used=False,
+                                expires_at=expires_dt)
+            self.db.add(row)
+            self.db.commit()
+            self.db.refresh(row)
+            resp = OtpRequestOut(request_id=str(row.id), expires_in_seconds=300)
             if settings.DEBUG:
                 resp.dev_otp = otp
             return resp
         except Exception as e:
+            self.db.rollback()
             logger.error(f"Error requesting OTP: {e}")
             raise DatabaseException(f"Failed to request OTP: {e!s}")
 
-    def _ensure_phone_user(self, phone: str) -> dict:
-        doc = self.users.find_one({"identifier": phone})
-        if doc:
-            return doc
-
-        now = _now()
-        user_payload = {
-            "name": "Delivery User",
-            "identifier": phone,
-            # Create a random password hash so password login can't be guessed.
-            "password_hash": hash_password(secrets.token_urlsafe(16)),
-            "is_active": True,
-            "created_at": now,
-            "updated_at": now,
-        }
-        result = self.users.insert_one(user_payload)
-        user_payload["_id"] = result.inserted_id
-        return user_payload
+    def _ensure_phone_user(self, phone: str) -> UserORM:
+        row = self.db.query(UserORM).filter(UserORM.identifier == phone).first()
+        if row:
+            return row
+        row = UserORM(name="User", identifier=phone,
+                      password_hash=hash_password(secrets.token_urlsafe(16)), is_active=True)
+        self.db.add(row)
+        self.db.commit()
+        self.db.refresh(row)
+        return row
 
     def request_login_otp(self, item: LoginOtpRequestIn) -> OtpRequestOut:
         try:
             phone = _normalize_phone(item.phone)
             self._ensure_phone_user(phone)
-
-            # Dummy OTP for now
             otp = "0000" if settings.DEBUG else f"{secrets.randbelow(10_000):04d}"
-
-            now_dt = datetime.utcnow()
+            now_dt = _now_dt()
             expires_dt = now_dt + timedelta(minutes=5)
-
-            payload = {
-                "purpose": "login",
-                "identifier": phone,
-                "otp_hash": _sha256(otp),
-                "attempts": 0,
-                "is_used": False,
-                "created_at": now_dt.isoformat(),
-                "expires_at": expires_dt.isoformat(),
-                "updated_at": now_dt.isoformat(),
-            }
-
-            result = self.otp_requests.insert_one(payload)
-
-            resp = OtpRequestOut(request_id=str(result.inserted_id), expires_in_seconds=5 * 60)
+            row = OtpRequestORM(purpose="login", identifier=phone,
+                                otp_hash=_sha256(otp), attempts=0, is_used=False,
+                                expires_at=expires_dt)
+            self.db.add(row)
+            self.db.commit()
+            self.db.refresh(row)
+            resp = OtpRequestOut(request_id=str(row.id), expires_in_seconds=300)
             if settings.DEBUG:
                 resp.dev_otp = otp
             return resp
         except Exception as e:
+            self.db.rollback()
             logger.error(f"Error requesting login OTP: {e}")
             raise DatabaseException(f"Failed to request OTP: {e!s}")
 
     def verify_login_otp(self, item: LoginOtpVerifyIn) -> AuthUserOut:
         phone = _normalize_phone(item.phone)
-
-        try:
-            request_oid = ObjectId(item.request_id)
-        except Exception:
+        req = self.db.query(OtpRequestORM).filter(
+            OtpRequestORM.id == item.request_id, OtpRequestORM.purpose == "login"
+        ).first()
+        if not req:
             raise NotFoundException("OTP request not found")
-
-        try:
-            req = self.otp_requests.find_one({"_id": request_oid, "purpose": "login"})
-            if not req:
-                raise NotFoundException("OTP request not found")
-
-            if req.get("is_used"):
-                raise BadRequestException("OTP already used")
-
-            expires_at = req.get("expires_at")
-            if expires_at:
-                try:
-                    if datetime.fromisoformat(expires_at) < datetime.utcnow():
-                        raise BadRequestException("OTP expired")
-                except ValueError:
-                    pass
-
-            if _normalize_phone(req.get("identifier", "")) != phone:
-                raise BadRequestException("OTP request does not match phone")
-
-            if _sha256(item.otp.strip()) != req.get("otp_hash"):
-                self.otp_requests.update_one(
-                    {"_id": request_oid},
-                    {"$inc": {"attempts": 1}, "$set": {"updated_at": _now()}},
-                )
-                raise BadRequestException("Invalid OTP")
-
-            self.otp_requests.update_one(
-                {"_id": request_oid},
-                {"$set": {"is_used": True, "verified_at": _now(), "updated_at": _now()}},
-            )
-
-            user_doc = self._ensure_phone_user(phone)
-            return self._doc_to_user(user_doc)
-        except (BadRequestException, NotFoundException):
-            raise
-        except Exception as e:
-            logger.error(f"Error verifying login OTP: {e}")
-            raise DatabaseException(f"Failed to verify OTP: {e!s}")
+        if req.is_used:
+            raise BadRequestException("OTP already used")
+        if req.expires_at < _now_dt():
+            raise BadRequestException("OTP expired")
+        if _normalize_phone(req.identifier) != phone:
+            raise BadRequestException("OTP request does not match phone")
+        if _sha256(item.otp.strip()) != req.otp_hash:
+            req.attempts += 1
+            req.updated_at = _now_dt()
+            self.db.commit()
+            raise BadRequestException("Invalid OTP")
+        req.is_used = True
+        req.verified_at = _now_dt()
+        req.updated_at = _now_dt()
+        self.db.commit()
+        user = self._ensure_phone_user(phone)
+        return _user_out(user)
 
     def verify_signup_otp(self, item: SignupVerifyIn) -> AuthUserOut:
         identifier = _normalize_identifier(item.identifier)
-
-        if identifier != _normalize_identifier(identifier):
-            identifier = _normalize_identifier(identifier)
-
-        try:
-            request_oid = ObjectId(item.request_id)
-        except Exception:
+        req = self.db.query(OtpRequestORM).filter(
+            OtpRequestORM.id == item.request_id, OtpRequestORM.purpose == "signup"
+        ).first()
+        if not req:
             raise NotFoundException("OTP request not found")
-
-        try:
-            req = self.otp_requests.find_one({"_id": request_oid, "purpose": "signup"})
-            if not req:
-                raise NotFoundException("OTP request not found")
-
-            if req.get("is_used"):
-                raise BadRequestException("OTP already used")
-
-            expires_at = req.get("expires_at")
-            if expires_at:
-                try:
-                    if datetime.fromisoformat(expires_at) < datetime.utcnow():
-                        raise BadRequestException("OTP expired")
-                except ValueError:
-                    pass
-
-            if _normalize_identifier(req.get("identifier", "")) != identifier:
-                raise BadRequestException("OTP request does not match identifier")
-
-            if _sha256(item.otp.strip()) != req.get("otp_hash"):
-                self.otp_requests.update_one({"_id": request_oid}, {"$inc": {"attempts": 1}, "$set": {"updated_at": _now()}})
-                raise BadRequestException("Invalid OTP")
-
-            existing = self.users.find_one({"identifier": identifier})
-            if existing:
-                raise ConflictException("User already exists")
-
-            now = _now()
-            user_payload = {
-                "name": item.name.strip(),
-                "identifier": identifier,
-                "password_hash": hash_password(item.password),
-                "is_active": True,
-                "created_at": now,
-                "updated_at": now,
-            }
-
-            user_result = self.users.insert_one(user_payload)
-
-            self.otp_requests.update_one(
-                {"_id": request_oid},
-                {"$set": {"is_used": True, "verified_at": now, "updated_at": now}},
-            )
-
-            return AuthUserOut(id=str(user_result.inserted_id), **{k: v for k, v in user_payload.items() if k != "password_hash"})
-        except (BadRequestException, ConflictException, NotFoundException):
-            raise
-        except Exception as e:
-            logger.error(f"Error verifying signup OTP: {e}")
-            raise DatabaseException(f"Failed to verify OTP: {e!s}")
+        if req.is_used:
+            raise BadRequestException("OTP already used")
+        if req.expires_at < _now_dt():
+            raise BadRequestException("OTP expired")
+        if _normalize_identifier(req.identifier) != identifier:
+            raise BadRequestException("OTP request does not match identifier")
+        if _sha256(item.otp.strip()) != req.otp_hash:
+            req.attempts += 1
+            req.updated_at = _now_dt()
+            self.db.commit()
+            raise BadRequestException("Invalid OTP")
+        existing = self.db.query(UserORM).filter(UserORM.identifier == identifier).first()
+        if existing:
+            raise ConflictException("User already exists")
+        user = UserORM(name=item.name.strip(), identifier=identifier,
+                       password_hash=hash_password(item.password), is_active=True)
+        self.db.add(user)
+        req.is_used = True
+        req.verified_at = _now_dt()
+        req.updated_at = _now_dt()
+        self.db.commit()
+        self.db.refresh(user)
+        return _user_out(user)
 
     def login(self, item: LoginIn) -> AuthUserOut:
         try:
             identifier = _normalize_identifier(item.identifier)
-            doc = self.users.find_one({"identifier": identifier})
-            if not doc:
+            user_row = self.db.query(UserORM).filter(UserORM.identifier == identifier).first()
+            prod_row = self.db.query(ProductionUserORM).filter(ProductionUserORM.identifier == identifier).first()
+            del_row = self.db.query(DeliveryUserORM).filter(DeliveryUserORM.identifier == identifier).first()
+
+            if not user_row and not prod_row and not del_row:
                 raise BadRequestException("Invalid credentials")
 
-            if not doc.get("is_active", True):
+            disabled_found = False
+            for kind, doc in (("user", user_row), ("production", prod_row), ("delivery", del_row)):
+                if not doc:
+                    continue
+                if not doc.is_active:
+                    disabled_found = True
+                    continue
+                if not doc.password_hash:
+                    continue
+                try:
+                    if not verify_password(item.password, doc.password_hash):
+                        continue
+                except Exception:
+                    continue
+                return _user_out(doc)
+
+            if disabled_found:
                 raise BadRequestException("Account is disabled")
-
-            password_hash = doc.get("password_hash")
-            if not password_hash or not isinstance(password_hash, str):
-                raise BadRequestException("Invalid credentials")
-
-            try:
-                is_valid = verify_password(item.password, password_hash)
-            except Exception:
-                # e.g. UnknownHashError if stored hash is invalid
-                raise BadRequestException("Invalid credentials")
-
-            if not is_valid:
-                raise BadRequestException("Invalid credentials")
-
-            return self._doc_to_user(doc)
+            raise BadRequestException("Invalid credentials")
         except BadRequestException:
             raise
         except Exception as e:

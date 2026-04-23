@@ -1,131 +1,96 @@
-from datetime import datetime
-
-from bson import ObjectId
-from pymongo import ReturnDocument
-from pymongo.collection import Collection
-from pymongo.database import Database
-
+﻿from datetime import datetime
+from sqlalchemy.orm import Session
 from app.core.exceptions import DatabaseException, NotFoundException
 from app.core.logging import get_logger
-from app.models.delivery_management import (
-    DeliveryManagement,
-    DeliveryManagementCreate,
-    DeliveryManagementUpdate,
-)
+from app.db.orm_models import DeliveryManagementORM
+from app.models.delivery_management import DeliveryManagement, DeliveryManagementCreate, DeliveryManagementUpdate
 from app.utils.helpers import filter_none_values
 
 logger = get_logger(__name__)
 
+def _to_dm(row) -> DeliveryManagement:
+    return DeliveryManagement(
+        id=str(row.id), order_id=str(row.order_id) if row.order_id else None,
+        tracking_number=row.tracking_number,
+        delivery_date=row.delivery_date.isoformat() if row.delivery_date else None,
+        status=row.status, contact_name=row.contact_name, contact_phone=row.contact_phone,
+        address=row.address, delivery_identifier=row.delivery_identifier,
+        delivery_assigned_at=row.delivery_assigned_at.isoformat() if row.delivery_assigned_at else None,
+        notes=row.notes, attributes=row.attributes or {},
+        created_at=row.created_at.isoformat() if row.created_at else "",
+        updated_at=row.updated_at.isoformat() if row.updated_at else "",
+    )
 
 class DeliveryManagementService:
-    """Service for delivery management operations."""
-
-    def __init__(self, db: Database):
+    def __init__(self, db: Session):
         self.db = db
-        self.collection: Collection = db["delivery_managements"]
-
-    @staticmethod
-    def _to_object_id(value: str) -> ObjectId:
-        try:
-            return ObjectId(value)
-        except Exception:
-            raise NotFoundException(f"Delivery with ID {value} not found")
-
-    @staticmethod
-    def _now() -> str:
-        return datetime.utcnow().isoformat()
-
-    @staticmethod
-    def _doc_to_item(doc: dict) -> DeliveryManagement:
-        doc = doc.copy()
-        doc["id"] = str(doc.pop("_id"))
-        return DeliveryManagement(**doc)
 
     def create(self, item: DeliveryManagementCreate) -> DeliveryManagement:
         try:
-            now = self._now()
-            payload = item.model_dump()
-            payload["created_at"] = now
-            payload["updated_at"] = now
-
-            result = self.collection.insert_one(payload)
-            return DeliveryManagement(id=str(result.inserted_id), **payload)
+            row = DeliveryManagementORM(**item.model_dump())
+            self.db.add(row)
+            self.db.commit()
+            self.db.refresh(row)
+            return _to_dm(row)
         except Exception as e:
-            logger.error(f"Error creating delivery: {e}")
-            raise DatabaseException(f"Failed to create delivery: {e!s}")
+            self.db.rollback()
+            raise DatabaseException(f"Failed to create delivery management: {e!s}")
 
-    def get(self, item_id: str) -> DeliveryManagement:
+    def get(self, dm_id: str) -> DeliveryManagement:
         try:
-            doc = self.collection.find_one({"_id": self._to_object_id(item_id)})
-            if not doc:
-                raise NotFoundException(f"Delivery with ID {item_id} not found")
-            return self._doc_to_item(doc)
+            row = self.db.query(DeliveryManagementORM).filter(DeliveryManagementORM.id == dm_id).first()
+            if not row:
+                raise NotFoundException(f"Delivery management {dm_id} not found")
+            return _to_dm(row)
         except NotFoundException:
             raise
         except Exception as e:
-            logger.error(f"Error fetching delivery: {e}")
-            raise DatabaseException(f"Failed to fetch delivery: {e!s}")
+            raise DatabaseException(f"Failed to fetch delivery management: {e!s}")
 
-    def list(
-        self,
-        page: int = 1,
-        page_size: int = 20,
-        status: str | None = None,
-        order_id: str | None = None,
-    ) -> tuple[list[DeliveryManagement], int]:
+    def list(self, page=1, page_size=20, status=None, delivery_identifier=None) -> tuple:
         try:
-            query_filter: dict = {}
+            q = self.db.query(DeliveryManagementORM)
             if status:
-                query_filter["status"] = status
-            if order_id:
-                query_filter["order_id"] = order_id
-
-            total = self.collection.count_documents(query_filter)
-            cursor = (
-                self.collection.find(query_filter)
-                .sort("created_at", -1)
-                .skip((page - 1) * page_size)
-                .limit(page_size)
-            )
-            items = [self._doc_to_item(doc) for doc in cursor]
-            return items, total
+                q = q.filter(DeliveryManagementORM.status == status)
+            if delivery_identifier:
+                q = q.filter(DeliveryManagementORM.delivery_identifier == delivery_identifier)
+            q = q.order_by(DeliveryManagementORM.created_at.desc())
+            total = q.count()
+            rows = q.offset((page - 1) * page_size).limit(page_size).all()
+            return [_to_dm(r) for r in rows], total
         except Exception as e:
-            logger.error(f"Error listing deliveries: {e}")
-            raise DatabaseException(f"Failed to list deliveries: {e!s}")
+            raise DatabaseException(f"Failed to list delivery managements: {e!s}")
 
-    def update(self, item_id: str, update: DeliveryManagementUpdate) -> DeliveryManagement:
+    def update(self, dm_id: str, item: DeliveryManagementUpdate) -> DeliveryManagement:
         try:
-            oid = self._to_object_id(item_id)
-            update_data = filter_none_values(update.model_dump())
-
-            if not update_data:
-                return self.get(item_id)
-
-            update_data["updated_at"] = self._now()
-
-            updated = self.collection.find_one_and_update(
-                {"_id": oid},
-                {"$set": update_data},
-                return_document=ReturnDocument.AFTER,
-            )
-            if not updated:
-                raise NotFoundException(f"Delivery with ID {item_id} not found")
-            return self._doc_to_item(updated)
+            row = self.db.query(DeliveryManagementORM).filter(DeliveryManagementORM.id == dm_id).first()
+            if not row:
+                raise NotFoundException(f"Delivery management {dm_id} not found")
+            data = filter_none_values(item.model_dump())
+            if "delivery_identifier" in data and data["delivery_identifier"]:
+                data["delivery_assigned_at"] = datetime.utcnow()
+            for k, v in data.items():
+                setattr(row, k, v)
+            row.updated_at = datetime.utcnow()
+            self.db.commit()
+            self.db.refresh(row)
+            return _to_dm(row)
         except NotFoundException:
             raise
         except Exception as e:
-            logger.error(f"Error updating delivery: {e}")
-            raise DatabaseException(f"Failed to update delivery: {e!s}")
+            self.db.rollback()
+            raise DatabaseException(f"Failed to update delivery management: {e!s}")
 
-    def delete(self, item_id: str) -> bool:
+    def delete(self, dm_id: str) -> bool:
         try:
-            oid = self._to_object_id(item_id)
-            result = self.collection.delete_one({"_id": oid})
-            if result.deleted_count == 0:
-                raise NotFoundException(f"Delivery with ID {item_id} not found")
+            row = self.db.query(DeliveryManagementORM).filter(DeliveryManagementORM.id == dm_id).first()
+            if not row:
+                raise NotFoundException(f"Delivery management {dm_id} not found")
+            self.db.delete(row)
+            self.db.commit()
             return True
         except NotFoundException:
             raise
         except Exception as e:
-            logger.error(f"Error deleting delivery: {e}")
-            raise DatabaseException(f"Failed to delete delivery: {e!s}")
+            self.db.rollback()
+            raise DatabaseException(f"Failed to delete delivery management: {e!s}")

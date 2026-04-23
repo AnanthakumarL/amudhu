@@ -1,7 +1,6 @@
-from fastapi import APIRouter
-
+﻿from fastapi import APIRouter
 from app.core.config import get_settings
-from app.db.mongo_client import mongo_client
+from app.db.database import check_db_connection
 from app.models.common import HealthResponse
 
 router = APIRouter()
@@ -9,17 +8,10 @@ router = APIRouter()
 
 @router.get("/health", response_model=HealthResponse, tags=["Health"])
 async def health_check():
-    """Health check endpoint"""
     settings = get_settings()
-
-    try:
-        mongo_client.client.admin.command("ping")
-        mongo_connected = True
-    except Exception:
-        mongo_connected = False
-
+    db_ok = check_db_connection()
     return HealthResponse(
-        status="healthy" if mongo_connected else "degraded",
+        status="healthy" if db_ok else "degraded",
         version=settings.APP_VERSION,
-        weaviate_connected=mongo_connected,
+        weaviate_connected=db_ok,
     )

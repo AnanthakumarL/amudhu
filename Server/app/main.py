@@ -1,4 +1,4 @@
-from contextlib import asynccontextmanager
+﻿from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -6,8 +6,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.api import api_router
 from app.core.config import get_settings
 from app.core.logging import get_logger
-from app.db.mongo_client import mongo_client
-from app.db.mongo_schema import ensure_indexes, initialize_default_site_config
+from app.db.database import check_db_connection, engine
+from app.db.orm_models import Base
 
 logger = get_logger(__name__)
 settings = get_settings()
@@ -15,39 +15,31 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan manager"""
-    # Startup
     logger.info("Starting application...")
-
     try:
-        db = mongo_client.db
-        # Trigger a connection/ping
-        mongo_client.client.admin.command("ping")
-        ensure_indexes(db)
-        initialize_default_site_config(db)
-        logger.info("MongoDB initialized")
+        Base.metadata.create_all(bind=engine)
+        if check_db_connection():
+            logger.info("PostgreSQL (Supabase) connected and tables ensured")
+        else:
+            logger.warning("PostgreSQL connection check failed — running in degraded mode")
     except Exception as e:
-        logger.error(f"Failed to initialize MongoDB (server will start in degraded mode): {e}")
+        logger.error(f"Failed to initialize database: {e}")
 
     yield
 
-    # Shutdown
     logger.info("Shutting down application...")
-    mongo_client.close()
 
 
-# Create FastAPI application
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
-    description="E-commerce backend API with admin dashboard capabilities using Weaviate",
+    description="E-commerce backend API powered by Supabase (PostgreSQL)",
     lifespan=lifespan,
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
 )
 
-# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.get_cors_origins(),
@@ -57,13 +49,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include API router
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
 
 
 @app.get("/", tags=["Root"])
 async def root():
-    """Root endpoint"""
     return {
         "name": settings.APP_NAME,
         "version": settings.APP_VERSION,
@@ -79,9 +69,4 @@ async def favicon() -> Response:
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(
-        "app.main:app",
-        host="0.0.0.0",
-        port=settings.PORT,
-        reload=settings.DEBUG,
-    )
+    uvicorn.run("app.main:app", host="0.0.0.0", port=settings.PORT, reload=settings.DEBUG)
