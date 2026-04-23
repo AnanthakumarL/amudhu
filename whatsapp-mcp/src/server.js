@@ -87,13 +87,11 @@ export function startControlServer(waClient) {
     });
   });
 
-  // ── Logout from WhatsApp ──────────────────────────────────────────────────
+  // ── Logout from WhatsApp (clears auth + reconnects for fresh QR) ─────────
   app.post("/api/logout", async (_req, res) => {
     try {
-      if (waClient.sock && waClient.isConnected) {
-        await waClient.sock.logout();
-      }
-      res.json({ success: true, message: "Logged out. Restart the bot to scan QR again." });
+      await waClient.logout();
+      res.json({ success: true, message: "Logged out. QR code will appear shortly." });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }

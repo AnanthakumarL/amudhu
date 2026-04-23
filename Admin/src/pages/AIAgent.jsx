@@ -226,12 +226,15 @@ export default function AIAgent() {
   const [tab, setTab] = useState('overview'); // 'overview' | 'chats'
 
   const pollRef = useRef(null);
+  const statusRef = useRef(status);
+  useEffect(() => { statusRef.current = status; }, [status]);
 
   const fetchStatus = useCallback(async () => {
     try {
       const r = await botFetch('/api/status');
       if (r.ok) setStatus(await r.json());
-    } catch { /* bot may be offline */ }
+      else setStatus(null);
+    } catch { setStatus(null); }
   }, []);
 
   const fetchQr = useCallback(async () => {
@@ -261,11 +264,26 @@ export default function AIAgent() {
     fetchAnalytics();
   }, [fetchStatus, fetchQr, fetchAnalytics]);
 
+  // Poll fast (1s) when waiting for QR or disconnected, slow (6s) when connected
   useEffect(() => {
     refresh();
-    pollRef.current = setInterval(refresh, 5000);
-    return () => clearInterval(pollRef.current);
-  }, [refresh]);
+    const tick = () => {
+      const s = statusRef.current;
+      const needsFast = !s || !s.connected;
+      pollRef.current = setTimeout(async () => {
+        await Promise.all([fetchStatus(), fetchQr()]);
+        // Only fetch analytics at a slower rate
+        tick();
+      }, needsFast ? 1000 : 6000);
+    };
+    // Fetch analytics on a fixed 6s cadence separately
+    const analyticsInterval = setInterval(fetchAnalytics, 6000);
+    tick();
+    return () => {
+      clearTimeout(pollRef.current);
+      clearInterval(analyticsInterval);
+    };
+  }, [refresh, fetchStatus, fetchQr, fetchAnalytics]);
 
   const handleLogout = async () => {
     if (!confirm('Log out WhatsApp? You will need to scan the QR code again.')) return;
@@ -344,7 +362,7 @@ export default function AIAgent() {
               <p className="text-sm text-dark-500 text-center max-w-xs">
                 Open <strong>WhatsApp</strong> on your phone → <strong>Linked Devices</strong> → <strong>Link a Device</strong> → scan this QR code
               </p>
-              <p className="text-xs text-dark-400">QR refreshes automatically every 5 seconds</p>
+              <p className="text-xs text-dark-400">QR refreshes automatically every second</p>
             </>
           ) : (
             <div className="w-64 h-64 flex items-center justify-center bg-dark-50 rounded-xl border border-dark-100">
