@@ -14,6 +14,8 @@ import Accounts from './pages/Accounts';
 import Careers from './pages/Careers';
 import Applications from './pages/Applications';
 import ApplicationDetails from './pages/ApplicationDetails';
+import Users from './pages/Users';
+import AIAgent from './pages/AIAgent';
 
 const ADMIN_USER_KEY = 'admin_user';
 
@@ -54,9 +56,11 @@ function App() {
           <Route path="production-management/:id" element={<ProductionDetails />} />
           <Route path="delivery-management" element={<DeliveryManagement />} />
           <Route path="accounts" element={<Accounts />} />
+          <Route path="users" element={<Users />} />
           <Route path="careers" element={<Careers />} />
           <Route path="applications" element={<Applications />} />
           <Route path="applications/:id" element={<ApplicationDetails />} />
+          <Route path="ai-agent" element={<AIAgent />} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Route>
       </Routes>

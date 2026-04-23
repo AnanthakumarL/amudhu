@@ -5,12 +5,14 @@ import {
     ShoppingBag,
     ShoppingCart,
     Users,
+    UserCircle,
     Briefcase,
     Factory,
     Truck,
     LogOut,
     ChevronLeft,
-    ChevronRight
+    ChevronRight,
+    Bot
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { motion } from 'framer-motion';
@@ -25,7 +27,9 @@ const Sidebar = ({ isOpen, setIsOpen }) => {
         { icon: Factory, label: 'Production', path: '/production-management' },
         { icon: Truck, label: 'Delivery', path: '/delivery-management' },
         { icon: Users, label: 'Accounts', path: '/accounts' },
+        { icon: UserCircle, label: 'Users', path: '/users' },
         { icon: Briefcase, label: 'Careers', path: '/careers' },
+        { icon: Bot, label: 'AI Agent', path: '/ai-agent' },
         { icon: Settings, label: 'Site Config', path: '/site-config' },
     ];
 
