@@ -7,7 +7,7 @@ class CategoryBase(BaseModel):
 
     name: str = Field(..., min_length=1, max_length=200)
     description: str | None = None
-    section_id: str
+    section_id: str | None = None
     parent_category_id: str | None = None
     is_active: bool = True
     order: int = Field(default=0, ge=0)
@@ -17,6 +17,8 @@ class CategoryBase(BaseModel):
 
 class CategoryCreate(CategoryBase):
     """Category creation model"""
+
+    section_id: str
 
 
 

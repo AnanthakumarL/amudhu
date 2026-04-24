@@ -16,6 +16,8 @@ class ProductionUserBase(BaseModel):
 class ProductionUserCreate(ProductionUserBase):
     """Production user creation model."""
 
+    password: str = Field(..., min_length=6, max_length=255)
+
 
 class ProductionUserUpdate(BaseModel):
     """Production user update model."""

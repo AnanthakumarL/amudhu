@@ -133,7 +133,13 @@ class DeliveryUserORM(Base):
     created_at = Column(DateTime, default=_now)
     updated_at = Column(DateTime, default=_now, onupdate=_now)
 
-    delivery_managements = relationship("DeliveryManagementORM", back_populates="delivery_user")
+    delivery_managements = relationship(
+        "DeliveryManagementORM",
+        back_populates="delivery_user",
+        primaryjoin="foreign(DeliveryManagementORM.delivery_identifier) == DeliveryUserORM.identifier",
+        foreign_keys="[DeliveryManagementORM.delivery_identifier]",
+        viewonly=True,
+    )
 
 
 class AccountORM(Base):
@@ -222,7 +228,7 @@ class DeliveryManagementORM(Base):
     delivery_user = relationship(
         "DeliveryUserORM",
         back_populates="delivery_managements",
-        primaryjoin="DeliveryManagementORM.delivery_identifier == foreign(DeliveryUserORM.identifier)",
+        primaryjoin="foreign(DeliveryManagementORM.delivery_identifier) == DeliveryUserORM.identifier",
         foreign_keys="[DeliveryManagementORM.delivery_identifier]",
         viewonly=True,
     )

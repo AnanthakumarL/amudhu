@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { ClipboardList, RefreshCw, Eye, Users } from 'lucide-react';
+import { ClipboardList, Eye, Users, Plus, X, Edit2, Trash2 } from 'lucide-react';
 import { clsx } from 'clsx';
-import { ordersAPI, usersAPI } from '../services/api';
+import { ordersAPI, productionUsersAPI } from '../services/api';
 
 const getOrderStatusColor = (status) => {
   const colors = {
@@ -40,13 +40,33 @@ const ProductionManagement = () => {
   const [logins, setLogins] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeSection, setActiveSection] = useState('reports');
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showViewModal, setShowViewModal] = useState(false);
+  const [viewingLogin, setViewingLogin] = useState(null);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editingLogin, setEditingLogin] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [editSubmitting, setEditSubmitting] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
+  const [formData, setFormData] = useState({
+    name: '',
+    identifier: '',
+    production_address: 'Main Production Unit',
+    password: '',
+  });
+  const [editFormData, setEditFormData] = useState({
+    name: '',
+    identifier: '',
+    production_address: 'Main Production Unit',
+    is_active: true,
+  });
 
   const fetchItems = async () => {
     try {
       setLoading(true);
       const [ordersRes, usersRes] = await Promise.all([
         ordersAPI.list({ page: 1, page_size: 100, production_assigned: true }),
-        usersAPI.list({ page: 1, page_size: 100, production_only: true }),
+        productionUsersAPI.list({ page: 1, page_size: 100 }),
       ]);
 
       setItems(ordersRes?.data?.data || []);
@@ -56,6 +76,192 @@ const ProductionManagement = () => {
       console.error(error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const openCreateModal = () => {
+    setFormData({
+      name: '',
+      identifier: '',
+      production_address: 'Main Production Unit',
+      password: '',
+    });
+    setShowCreateModal(true);
+  };
+
+  const closeCreateModal = () => {
+    setShowCreateModal(false);
+    setFormData({
+      name: '',
+      identifier: '',
+      production_address: 'Main Production Unit',
+      password: '',
+    });
+  };
+
+  const handleFormChange = (e) => {
+    const { name, value } = e.target;
+    setFormData((prev) => ({
+      ...prev,
+      [name]: value,
+    }));
+  };
+
+  const openViewLogin = (login) => {
+    setViewingLogin(login || null);
+    setShowViewModal(true);
+  };
+
+  const closeViewLogin = () => {
+    setShowViewModal(false);
+    setViewingLogin(null);
+  };
+
+  const openEditLogin = (login) => {
+    setEditingLogin(login || null);
+    setEditFormData({
+      name: String(login?.name || ''),
+      identifier: String(login?.identifier || ''),
+      production_address: String(login?.production_address || 'Main Production Unit'),
+      is_active: Boolean(login?.is_active ?? true),
+    });
+    setShowEditModal(true);
+  };
+
+  const closeEditLogin = () => {
+    setShowEditModal(false);
+    setEditingLogin(null);
+    setEditFormData({
+      name: '',
+      identifier: '',
+      production_address: 'Main Production Unit',
+      is_active: true,
+    });
+  };
+
+  const handleEditChange = (e) => {
+    const { name, value, type, checked } = e.target;
+    setEditFormData((prev) => ({
+      ...prev,
+      [name]: type === 'checkbox' ? checked : value,
+    }));
+  };
+
+  const handleEditSubmit = async (e) => {
+    e.preventDefault();
+
+    if (!editingLogin?.id) {
+      toast.error('Production login not loaded');
+      return;
+    }
+
+    const trimmedName = String(editFormData.name || '').trim();
+    if (!trimmedName) {
+      toast.error('Name is required');
+      return;
+    }
+
+    const trimmedIdentifier = String(editFormData.identifier || '').trim().toLowerCase();
+    if (!trimmedIdentifier) {
+      toast.error('Identifier is required');
+      return;
+    }
+
+    const trimmedAddress = String(editFormData.production_address || '').trim();
+    if (!trimmedAddress) {
+      toast.error('Production address is required');
+      return;
+    }
+
+    try {
+      setEditSubmitting(true);
+      await productionUsersAPI.update(editingLogin.id, {
+        name: trimmedName,
+        identifier: trimmedIdentifier,
+        production_address: trimmedAddress,
+        is_active: Boolean(editFormData.is_active),
+      });
+      toast.success('Production login updated');
+      closeEditLogin();
+      await fetchItems();
+    } catch (error) {
+      const message = error?.response?.data?.detail || 'Failed to update production login';
+      toast.error(message);
+      console.error(error);
+    } finally {
+      setEditSubmitting(false);
+    }
+  };
+
+  const deleteLogin = async (login) => {
+    if (!login?.id) {
+      toast.error('Production login not loaded');
+      return;
+    }
+
+    const label = login?.name || login?.identifier || 'this login';
+    // eslint-disable-next-line no-alert
+    if (!confirm(`Delete ${label}?`)) return;
+
+    try {
+      setDeletingId(login.id);
+      await productionUsersAPI.delete(login.id);
+      toast.success('Production login deleted');
+      await fetchItems();
+    } catch (error) {
+      const message = error?.response?.data?.detail || 'Failed to delete production login';
+      toast.error(message);
+      console.error(error);
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+
+    const trimmedName = String(formData.name || '').trim();
+    if (!trimmedName) {
+      toast.error('Name is required');
+      return;
+    }
+
+    const trimmedIdentifier = String(formData.identifier || '').trim().toLowerCase();
+    if (!trimmedIdentifier) {
+      toast.error('Identifier is required');
+      return;
+    }
+
+    const trimmedAddress = String(formData.production_address || '').trim();
+    if (!trimmedAddress) {
+      toast.error('Production address is required');
+      return;
+    }
+
+    const password = String(formData.password || '').trim();
+    if (!password || password.length < 6) {
+      toast.error('Password must be at least 6 characters');
+      return;
+    }
+
+    try {
+      setSubmitting(true);
+      await productionUsersAPI.create({
+        name: trimmedName,
+        identifier: trimmedIdentifier,
+        production_address: trimmedAddress,
+        password: password,
+        is_active: true,
+      });
+      toast.success('Production login created successfully');
+      closeCreateModal();
+      await fetchItems();
+    } catch (error) {
+      const message = error?.response?.data?.detail || 'Failed to create production login';
+      toast.error(message);
+      console.error(error);
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -72,6 +278,7 @@ const ProductionManagement = () => {
       id: u.id,
       name: u.name,
       identifier: u.identifier,
+      production_address: u.production_address,
       is_active: Boolean(u.is_active),
       created_at: u.created_at,
       updated_at: u.updated_at,
@@ -127,14 +334,16 @@ const ProductionManagement = () => {
             </button>
           </div>
 
-          <button
-            onClick={fetchItems}
-            className="btn-secondary flex items-center justify-center gap-2"
-            type="button"
-          >
-            <RefreshCw className="w-4 h-4" />
-            <span>Refresh</span>
-          </button>
+          {activeSection === 'logins' && (
+            <button
+              onClick={openCreateModal}
+              className="btn-primary flex items-center justify-center gap-2"
+              type="button"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Create Production Login</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -142,7 +351,7 @@ const ProductionManagement = () => {
         <div className="bg-white rounded-xl shadow-sm border border-dark-100 overflow-hidden">
           <div className="px-6 py-4 border-b border-dark-100">
             <div className="text-sm font-semibold text-dark-900">Production Logins</div>
-            <div className="text-xs text-dark-500 mt-1">Logins used to access the Production portal (based on assigned orders).</div>
+            <div className="text-xs text-dark-500 mt-1">Logins used to access the Production portal.</div>
           </div>
 
           <div className="overflow-x-auto">
@@ -154,18 +363,19 @@ const ProductionManagement = () => {
                   <th className="px-6 py-4 text-left text-xs font-semibold text-dark-500 uppercase tracking-wider">Active</th>
                   <th className="px-6 py-4 text-left text-xs font-semibold text-dark-500 uppercase tracking-wider">Created</th>
                   <th className="px-6 py-4 text-left text-xs font-semibold text-dark-500 uppercase tracking-wider">Updated</th>
+                  <th className="px-6 py-4 text-right text-xs font-semibold text-dark-500 uppercase tracking-wider">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-dark-100">
                 {loginRows.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="px-6 py-16 text-center text-dark-500">
+                    <td colSpan={6} className="px-6 py-16 text-center text-dark-500">
                       <div className="flex flex-col items-center justify-center">
                         <div className="w-16 h-16 bg-dark-50 rounded-full flex items-center justify-center mb-4">
                           <Users className="w-8 h-8 text-dark-300" />
                         </div>
                         <p className="text-lg font-medium text-dark-900">No production logins found</p>
-                        <p className="text-sm mt-1">They will appear after orders are assigned to production.</p>
+                        <p className="text-sm mt-1">Click Create Production Login to add one.</p>
                       </div>
                     </td>
                   </tr>
@@ -193,6 +403,37 @@ const ProductionManagement = () => {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="text-sm text-dark-600">{formatDate(r.updated_at)}</div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => openViewLogin(r)}
+                            className="p-1.5 text-violet-600 hover:bg-violet-50 rounded-lg transition-colors"
+                            title="View"
+                            disabled={deletingId === r.id}
+                          >
+                            <Eye className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openEditLogin(r)}
+                            className="p-1.5 text-dark-700 hover:bg-dark-100 rounded-lg transition-colors"
+                            title="Edit"
+                            disabled={deletingId === r.id}
+                          >
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => deleteLogin(r)}
+                            className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                            title="Delete"
+                            disabled={deletingId === r.id}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))
@@ -290,6 +531,248 @@ const ProductionManagement = () => {
                 )}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* Create Production Login Modal */}
+      {showCreateModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+            {/* Modal Header */}
+            <div className="px-6 py-4 border-b border-dark-100 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-dark-900">Create Production Login</h2>
+              <button
+                onClick={closeCreateModal}
+                className="text-dark-400 hover:text-dark-600 transition-colors"
+                type="button"
+                disabled={submitting}
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <form onSubmit={handleSubmit} className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-dark-700 mb-2">Name</label>
+                <input
+                  type="text"
+                  name="name"
+                  value={formData.name}
+                  onChange={handleFormChange}
+                  placeholder="e.g., John Smith"
+                  className="w-full px-4 py-2.5 border border-dark-200 rounded-lg focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none transition-all"
+                  disabled={submitting}
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-dark-700 mb-2">Identifier</label>
+                <input
+                  type="text"
+                  name="identifier"
+                  value={formData.identifier}
+                  onChange={handleFormChange}
+                  placeholder="e.g., john@example.com or phone number"
+                  className="w-full px-4 py-2.5 border border-dark-200 rounded-lg focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none transition-all"
+                  disabled={submitting}
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-dark-700 mb-2">Production Address</label>
+                <input
+                  type="text"
+                  name="production_address"
+                  value={formData.production_address}
+                  onChange={handleFormChange}
+                  placeholder="e.g., Main Production Unit"
+                  className="w-full px-4 py-2.5 border border-dark-200 rounded-lg focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none transition-all"
+                  disabled={submitting}
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-dark-700 mb-2">Password</label>
+                <input
+                  type="password"
+                  name="password"
+                  value={formData.password}
+                  onChange={handleFormChange}
+                  placeholder="Minimum 6 characters"
+                  className="w-full px-4 py-2.5 border border-dark-200 rounded-lg focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none transition-all"
+                  disabled={submitting}
+                  required
+                  minLength="6"
+                />
+              </div>
+
+              {/* Modal Footer */}
+              <div className="flex gap-3 pt-4 border-t border-dark-100">
+                <button
+                  type="button"
+                  onClick={closeCreateModal}
+                  className="flex-1 px-4 py-2.5 bg-dark-100 text-dark-700 rounded-lg font-medium hover:bg-dark-200 transition-colors"
+                  disabled={submitting}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 px-4 py-2.5 bg-violet-600 text-white rounded-lg font-medium hover:bg-violet-700 transition-colors disabled:opacity-50"
+                  disabled={submitting}
+                >
+                  {submitting ? 'Creating...' : 'Create'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* View Production Login Modal */}
+      {showViewModal && viewingLogin && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+            <div className="px-6 py-4 border-b border-dark-100 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-dark-900">Production Login</h2>
+              <button
+                onClick={closeViewLogin}
+                className="text-dark-400 hover:text-dark-600 transition-colors"
+                type="button"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div>
+                <div className="text-xs font-semibold text-dark-500 uppercase tracking-wider">Name</div>
+                <div className="text-sm text-dark-900 mt-1">{viewingLogin.name || '-'}</div>
+              </div>
+              <div>
+                <div className="text-xs font-semibold text-dark-500 uppercase tracking-wider">Identifier</div>
+                <div className="text-sm text-dark-900 mt-1 break-words">{viewingLogin.identifier || '-'}</div>
+              </div>
+              <div>
+                <div className="text-xs font-semibold text-dark-500 uppercase tracking-wider">Production Address</div>
+                <div className="text-sm text-dark-900 mt-1 whitespace-pre-wrap break-words">{viewingLogin.production_address || '-'}</div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <div className="text-xs font-semibold text-dark-500 uppercase tracking-wider">Status</div>
+                  <div className="text-sm text-dark-900 mt-1">{viewingLogin.is_active ? 'Active' : 'Disabled'}</div>
+                </div>
+                <div>
+                  <div className="text-xs font-semibold text-dark-500 uppercase tracking-wider">Created</div>
+                  <div className="text-sm text-dark-900 mt-1">{formatDate(viewingLogin.created_at)}</div>
+                </div>
+              </div>
+              <div>
+                <div className="text-xs font-semibold text-dark-500 uppercase tracking-wider">Updated</div>
+                <div className="text-sm text-dark-900 mt-1">{formatDate(viewingLogin.updated_at)}</div>
+              </div>
+            </div>
+
+            <div className="px-6 py-4 border-t border-dark-100">
+              <button type="button" className="btn-secondary w-full" onClick={closeViewLogin}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Production Login Modal */}
+      {showEditModal && editingLogin && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+            <div className="px-6 py-4 border-b border-dark-100 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-dark-900">Edit Production Login</h2>
+              <button
+                onClick={closeEditLogin}
+                className="text-dark-400 hover:text-dark-600 transition-colors"
+                type="button"
+                disabled={editSubmitting}
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleEditSubmit} className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-dark-700 mb-2">Name</label>
+                <input
+                  type="text"
+                  name="name"
+                  value={editFormData.name}
+                  onChange={handleEditChange}
+                  className="w-full px-4 py-2.5 border border-dark-200 rounded-lg focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none transition-all"
+                  disabled={editSubmitting}
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-dark-700 mb-2">Identifier</label>
+                <input
+                  type="text"
+                  name="identifier"
+                  value={editFormData.identifier}
+                  onChange={handleEditChange}
+                  className="w-full px-4 py-2.5 border border-dark-200 rounded-lg focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none transition-all"
+                  disabled={editSubmitting}
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-dark-700 mb-2">Production Address</label>
+                <input
+                  type="text"
+                  name="production_address"
+                  value={editFormData.production_address}
+                  onChange={handleEditChange}
+                  className="w-full px-4 py-2.5 border border-dark-200 rounded-lg focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none transition-all"
+                  disabled={editSubmitting}
+                  required
+                />
+              </div>
+
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  name="is_active"
+                  checked={Boolean(editFormData.is_active)}
+                  onChange={handleEditChange}
+                  disabled={editSubmitting}
+                  className="h-4 w-4 rounded border-dark-300 text-violet-600 focus:ring-violet-500"
+                />
+                <span className="text-sm text-dark-700">Active</span>
+              </label>
+
+              <div className="flex gap-3 pt-4 border-t border-dark-100">
+                <button
+                  type="button"
+                  onClick={closeEditLogin}
+                  className="flex-1 px-4 py-2.5 bg-dark-100 text-dark-700 rounded-lg font-medium hover:bg-dark-200 transition-colors"
+                  disabled={editSubmitting}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 px-4 py-2.5 bg-violet-600 text-white rounded-lg font-medium hover:bg-violet-700 transition-colors disabled:opacity-50"
+                  disabled={editSubmitting}
+                >
+                  {editSubmitting ? 'Saving...' : 'Save'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

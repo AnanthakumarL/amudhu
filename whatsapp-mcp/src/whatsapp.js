@@ -4,6 +4,7 @@ import makeWASocket, {
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
   isJidBroadcast,
+  downloadMediaMessage,
 } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
 import qrcode from "qrcode-terminal";
@@ -127,15 +128,32 @@ export class WhatsAppClient extends EventEmitter {
   _parseMessage(msg) {
     const jid = msg.key.remoteJid;
     const isGroup = jid.endsWith("@g.us");
+
+    // Resolve @lid JIDs to actual phone numbers via the contact store
+    const resolveJid = (j) => {
+      if (!j) return "";
+      if (j.endsWith("@lid")) {
+        const contacts = this.sock?.contacts || {};
+        for (const [cJid, c] of Object.entries(contacts)) {
+          if ((c.lid === j || c.id === j) && cJid.endsWith("@s.whatsapp.net")) {
+            return cJid.replace("@s.whatsapp.net", "");
+          }
+        }
+        // Fallback: strip suffix — number may still be correct for non-lid accounts
+      }
+      return j.replace(/@[^@]+$/, "");
+    };
+
     const from = isGroup
-      ? msg.key.participant?.replace("@s.whatsapp.net", "") || "unknown"
-      : jid.replace("@s.whatsapp.net", "");
+      ? resolveJid(msg.key.participant) || "unknown"
+      : resolveJid(jid);
 
     const content = msg.message;
     if (!content) return null;
 
     let text = null;
     let mediaType = null;
+    let mediaMime = null;
 
     if (content.conversation) {
       text = content.conversation;
@@ -144,16 +162,21 @@ export class WhatsAppClient extends EventEmitter {
     } else if (content.imageMessage) {
       text = content.imageMessage.caption || "";
       mediaType = "image";
+      mediaMime = content.imageMessage.mimetype || "image/jpeg";
     } else if (content.videoMessage) {
       text = content.videoMessage.caption || "";
       mediaType = "video";
+      mediaMime = content.videoMessage.mimetype || "video/mp4";
     } else if (content.audioMessage) {
       mediaType = "audio";
+      mediaMime = content.audioMessage.mimetype || "audio/ogg; codecs=opus";
     } else if (content.documentMessage) {
       text = content.documentMessage.fileName || "";
       mediaType = "document";
+      mediaMime = content.documentMessage.mimetype || "application/octet-stream";
     } else if (content.stickerMessage) {
       mediaType = "sticker";
+      mediaMime = content.stickerMessage.mimetype || "image/webp";
     }
 
     return {
@@ -164,11 +187,27 @@ export class WhatsAppClient extends EventEmitter {
       groupName: isGroup ? jid : null,
       text,
       mediaType,
+      mediaMime,
       timestamp: msg.messageTimestamp
         ? new Date(Number(msg.messageTimestamp) * 1000).toISOString()
         : new Date().toISOString(),
       raw: msg,
     };
+  }
+
+  async downloadMedia(msg) {
+    try {
+      const buffer = await downloadMediaMessage(
+        msg.raw,
+        "buffer",
+        {},
+        { logger, reuploadRequest: this.sock.updateMediaMessage }
+      );
+      return { data: buffer.toString("base64"), mimeType: msg.mediaMime };
+    } catch (err) {
+      console.error(`⚠️  Failed to download media: ${err.message}`);
+      return null;
+    }
   }
 
   async sendMessage(to, text) {

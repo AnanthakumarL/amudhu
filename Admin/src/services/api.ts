@@ -75,6 +75,33 @@ export interface DeliveryManagement {
   [key: string]: any;
 }
 
+export interface DeliveryUser {
+  id?: string;
+  name?: string;
+  identifier?: string;
+  phone?: string;
+  login_id?: string;
+  email?: string;
+  is_production_account?: boolean;
+  last_login?: string;
+  is_active?: boolean;
+  created_at?: string;
+  updated_at?: string;
+  [key: string]: any;
+}
+
+export interface ProductionUser {
+  id?: string;
+  name: string;
+  identifier: string;
+  production_address: string;
+  password?: string;
+  is_active?: boolean;
+  created_at?: string;
+  updated_at?: string;
+  [key: string]: any;
+}
+
 export interface Account {
   id?: string;
   name?: string;
@@ -154,6 +181,24 @@ export const authAPI = {
 export const usersAPI = {
   list: (params?: ListParams & { is_active?: boolean; production_only?: boolean }) =>
     api.get<PaginatedResponse<AuthUser>>('/users', { params }),
+};
+
+export const productionUsersAPI = {
+  list: (params?: ListParams & { is_active?: boolean }) =>
+    api.get<PaginatedResponse<ProductionUser>>('/production-users', { params }),
+  create: (data: Partial<ProductionUser>) => api.post<ProductionUser>('/production-users', data),
+  get: (id: string) => api.get<ProductionUser>(`/production-users/${id}`),
+  update: (id: string, data: Partial<ProductionUser>) => api.put<ProductionUser>(`/production-users/${id}`, data),
+  delete: (id: string) => api.delete(`/production-users/${id}`),
+};
+
+export const deliveryUsersAPI = {
+  list: (params?: ListParams & { is_active?: boolean }) =>
+    api.get<PaginatedResponse<DeliveryUser>>('/delivery-users', { params }),
+  create: (data: Partial<DeliveryUser>) => api.post<DeliveryUser>('/delivery-users', data),
+  get: (id: string) => api.get<DeliveryUser>(`/delivery-users/${id}`),
+  update: (id: string, data: Partial<DeliveryUser>) => api.put<DeliveryUser>(`/delivery-users/${id}`, data),
+  delete: (id: string) => api.delete(`/delivery-users/${id}`),
 };
 
 // Site Configuration API

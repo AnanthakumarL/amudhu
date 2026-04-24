@@ -100,3 +100,10 @@ class CategoryService:
             self.db.rollback()
             logger.error(f"Error deleting category: {e}")
             raise DatabaseException(f"Failed to delete category: {e!s}")
+
+    # Aliases expected by the endpoint layer
+    def create_category(self, item): return self.create(item)
+    def get_category(self, category_id): return self.get(category_id)
+    def list_categories(self, page, page_size, parent_id=None): return self.list(page, page_size)
+    def update_category(self, category_id, item): return self.update(category_id, item)
+    def delete_category(self, category_id): return self.delete(category_id)

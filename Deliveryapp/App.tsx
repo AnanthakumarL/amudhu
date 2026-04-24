@@ -12,14 +12,14 @@ import { Pressable, SafeAreaView, ScrollView, Text, TextInput, View } from 'reac
 import { HomeScreen } from './src/screens/HomeScreen';
 import { OrdersScreen } from './src/screens/OrdersScreen';
 import { ProfileScreen } from './src/screens/ProfileScreen';
-import { TrackScreen } from './src/screens/TrackScreen';
+import { WalletScreen } from './src/screens/WalletScreen';
 import { LoginScreen } from './src/screens/LoginScreen';
 import { OtpScreen } from './src/screens/OtpScreen';
 
 const bottomTabs = [
   { key: 'home', label: 'Home', icon: 'home' },
   { key: 'orders', label: 'Orders', icon: 'receipt' },
-  { key: 'browse', label: 'Browse', icon: 'search' },
+  { key: 'wallet', label: 'Wallet', icon: 'wallet' },
   { key: 'profile', label: 'Profile', icon: 'person' },
 ] as const;
 
@@ -46,8 +46,8 @@ export default function App() {
             }} 
           />
         );
-      case 'browse':
-        return <TrackScreen />; // Using TrackScreen for 'browse' as per updated design
+      case 'wallet':
+        return <WalletScreen phone={authPhone} />;
       default:
         return <HomeScreen />;
     }

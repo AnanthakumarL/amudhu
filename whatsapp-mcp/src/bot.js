@@ -33,30 +33,44 @@ if (existsSync(envFile)) {
 }
 
 const processingSet = new Set();
+const SUPPORTED_MEDIA = new Set(["image", "audio"]);
 
 async function handleMessage(wa, msg) {
-  if (!msg.text) return;
+  // Skip if no text AND no supported media
+  if (!msg.text && !SUPPORTED_MEDIA.has(msg.mediaType)) return;
   if (processingSet.has(msg.id)) return;
   processingSet.add(msg.id);
 
   const from  = msg.from;
   const phone = from.replace(/[^0-9]/g, "");
-  const text  = msg.text.trim();
+  const text  = msg.text?.trim() || "";
+  let media   = null;
 
   try {
-    console.error(`\n📨 [${from}] ${text.substring(0, 120)}`);
+    const mediaLabel = msg.mediaType ? ` [${msg.mediaType}]` : "";
+    console.error(`\n📨 [${from}]${mediaLabel} ${text.substring(0, 120)}`);
     await wa.sock.sendPresenceUpdate("composing", msg.jid);
 
-    const reply = await agentReply(from, phone, text);
+    // Download image/audio bytes for Gemini multimodal
+    if (SUPPORTED_MEDIA.has(msg.mediaType)) {
+      media = await wa.downloadMedia(msg);
+      if (!media) console.error(`⚠️  Media download failed for ${msg.id} — proceeding text-only`);
+    }
+
+    const reply = await agentReply(from, phone, text, media);
 
     await wa.sock.sendPresenceUpdate("paused", msg.jid);
     await wa.sock.sendMessage(msg.jid, { text: reply, quoted: msg.raw });
 
-    console.error(`🤖 ${reply.substring(0, 100)}${reply.length > 100 ? "…" : ""}`);
+    const preview = reply.substring(0, 100);
+    console.error(`🤖 ${preview}${reply.length > 100 ? "…" : ""}`);
   } catch (err) {
     console.error(`❌ [${from}] ${err.message}`);
     await wa.sock.sendPresenceUpdate("paused", msg.jid).catch(() => {});
-    await wa.sendMessage(from, "Sorry, something went wrong. Please try again!").catch(() => {});
+    const errMsg = media
+      ? "⚠️ Sorry, I couldn't process your media right now. Please try again in a moment! 🙏"
+      : "⚠️ Sorry, something went wrong on our end. Please try again!";
+    await wa.sock.sendMessage(msg.jid, { text: errMsg }).catch(() => {});
   } finally {
     processingSet.delete(msg.id);
   }

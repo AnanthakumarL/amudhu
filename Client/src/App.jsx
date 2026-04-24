@@ -1,79 +1,68 @@
-import React from "react";
-import { HashRouter as Router, Routes, Route, Navigate } from "react-router-dom";
-import HomePage from "./pages/HomePage.jsx";
-import FloversPage from "./pages/FloversPage.jsx";
-import ProductDetailsPage from "./pages/ProductDetailsPage.jsx";
-import ProductsPage from "./pages/Products.jsx";
-import CartPage from "./pages/CartPage.jsx";
-import CheckoutPage from "./pages/CheckoutPage.jsx";
-import AboutPage from "./pages/AboutPage.jsx";
-import ContactPage from "./pages/ContactPage.jsx";
-import CareersPage from "./pages/CareersPage.jsx";
-import JobDetailsPage from "./pages/JobDetailsPage.jsx";
-import NotFoundPage from "./pages/NotFoundPage.jsx";
-import LoginPage from "./pages/LoginPage.jsx";
-import SignupPage from "./pages/SignupPage.jsx";
-import ProfilePage from "./pages/ProfilePage.jsx";
-import OrdersPage from "./pages/OrdersPage.jsx";
-import OTPVerification from "./pages/OTPVerification.jsx";
-import AddaddressifNewuser from "./pages/AddaddressifNewuser.jsx";
-import Frame1180 from "./pages/Frame1180.jsx";
+import React from 'react'
+import { BrowserRouter, Routes, Route, ScrollRestoration, useLocation } from 'react-router-dom'
+import { Toaster } from 'react-hot-toast'
+import { CartProvider } from './context/CartContext'
 
-const getAuthUser = () => {
-  try {
-    const raw = localStorage.getItem("auth_user");
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
-};
+import Navbar   from './components/Navbar'
+import Footer   from './components/Footer'
 
-const GuestOnly = ({ children }) => {
-  return getAuthUser() ? <Navigate to="/profile" replace /> : children;
-};
+import Home             from './pages/Home'
+import Menu             from './pages/Menu'
+import ProductDetail    from './pages/ProductDetail'
+import Cart             from './pages/Cart'
+import Checkout         from './pages/Checkout'
+import OrderConfirmation from './pages/OrderConfirmation'
+import About            from './pages/About'
+import Contact          from './pages/Contact'
 
-const RequireAuth = ({ children }) => {
-  return getAuthUser() ? children : <Navigate to="/login" replace />;
-};
+/* Scroll to top on route change */
+function ScrollToTop() {
+  const { pathname } = useLocation()
+  React.useEffect(() => { window.scrollTo(0, 0) }, [pathname])
+  return null
+}
 
-const App = () => {
+function Layout() {
   return (
-    <Router>
-      <Routes>
-        <Route path="/" element={<HomePage />} />
-        <Route path="/flavours" element={<FloversPage />} />
-        <Route path="/products" element={<ProductsPage />} />
+    <>
+      <Navbar />
+      <main>
+        <Routes>
+          <Route path="/"                   element={<Home />} />
+          <Route path="/menu"               element={<Menu />} />
+          <Route path="/product/:id"        element={<ProductDetail />} />
+          <Route path="/cart"               element={<Cart />} />
+          <Route path="/checkout"           element={<Checkout />} />
+          <Route path="/order-confirmation" element={<OrderConfirmation />} />
+          <Route path="/about"              element={<About />} />
+          <Route path="/contact"            element={<Contact />} />
+          <Route path="*"                   element={<NotFound />} />
+        </Routes>
+      </main>
+      <Footer />
+    </>
+  )
+}
 
-        {/* Backward compatibility (old misspelling) */}
-        <Route path="/flovers" element={<Navigate to="/flavours" replace />} />
+function NotFound() {
+  return (
+    <div className="min-h-screen bg-parchment pt-24 flex flex-col items-center justify-center gap-4 text-center px-4">
+      <span className="text-7xl">🍦</span>
+      <h1 className="font-display text-5xl font-bold text-olive-900">404</h1>
+      <p className="text-olive-600 text-lg">Oops! This page seems to have melted.</p>
+      <a href="/" className="btn-primary mt-2">Go Home</a>
+    </div>
+  )
+}
 
-        {/* Backward compatibility */}
-        <Route path="/FlavoursPage" element={<Navigate to="/flavours" replace />} />
-
-        <Route path="/product/:productId" element={<ProductDetailsPage />} />
-        <Route path="/cart" element={<CartPage />} />
-        <Route path="/checkout" element={<CheckoutPage />} />
-
-        <Route path="/about" element={<AboutPage />} />
-        <Route path="/contact" element={<ContactPage />} />
-        <Route path="/careers" element={<CareersPage />} />
-        <Route path="/careers/:jobId" element={<JobDetailsPage />} />
-
-        <Route path="/login" element={<GuestOnly><LoginPage /></GuestOnly>} />
-        <Route path="/signup" element={<GuestOnly><SignupPage /></GuestOnly>} />
-
-        <Route path="/profile" element={<RequireAuth><ProfilePage /></RequireAuth>} />
-        <Route path="/orders" element={<RequireAuth><OrdersPage /></RequireAuth>} />
-
-        {/* Login flow (ported from /login project) */}
-        <Route path="/otp-verification" element={<OTPVerification />} />
-        <Route path="/add-address" element={<AddaddressifNewuser />} />
-        <Route path="/frame1180" element={<Frame1180 />} />
-
-        <Route path="*" element={<NotFoundPage />} />
-      </Routes>
-    </Router>
-  );
-};
-
-export default App;
+export default function App() {
+  return (
+    <BrowserRouter>
+      <CartProvider>
+        <ScrollToTop />
+        <Layout />
+        <Toaster position="bottom-right" toastOptions={{ duration: 3000 }} />
+      </CartProvider>
+    </BrowserRouter>
+  )
+}

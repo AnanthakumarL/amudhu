@@ -52,6 +52,10 @@ class OrderBase(BaseModel):
     status: OrderStatus = OrderStatus.PENDING
     production_status: ProductionStatus = ProductionStatus.ORDER_RECEIVED
     notes: str | None = None
+    # Channel that created this order (e.g. "whatsapp", "web", "admin")
+    source: str | None = None
+    # Preferred delivery date/time (free-text, set by WhatsApp orders)
+    delivery_datetime: str | None = None
 
     # Production assignment (for Production portal)
     production_identifier: str | None = Field(default=None, min_length=1, max_length=320)

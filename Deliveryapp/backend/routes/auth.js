@@ -46,22 +46,41 @@ const ensureVerifyServiceCodeLength = async () => {
   verifyServiceConfigured = true;
 };
 
+/**
+ * Normalises a phone input to E.164 for India (+91XXXXXXXXXX).
+ * Accepts:  9876543210 | 919876543210 | +919876543210 | +91 98765 43210
+ * Returns:  +91XXXXXXXXXX  or  '' if invalid.
+ */
 const toE164 = (phone) => {
   const raw = String(phone || '').trim();
   if (!raw) return '';
 
-  if (raw.startsWith('+')) {
-    return `+${raw.replace(/\D/g, '')}`;
-  }
-
+  // Strip everything except digits (keep leading + handled separately)
   const digits = raw.replace(/\D/g, '');
+
+  // 10-digit Indian mobile number (no country code)
   if (digits.length === 10) {
     return `+91${digits}`;
   }
+  // 12-digit with country code 91 (no +)
   if (digits.length === 12 && digits.startsWith('91')) {
     return `+${digits}`;
   }
-  return `+${digits}`;
+  // 13-char E.164 with leading + already stripped by replace above won't happen
+  // Handle the original +91XXXXXXXXXX (13 digits starting 91 after stripping +)
+  if (raw.startsWith('+') && digits.length === 12 && digits.startsWith('91')) {
+    return `+${digits}`;
+  }
+
+  return '';
+};
+
+/**
+ * Returns true only if the normalised phone is a valid Indian mobile number.
+ * Format: +91 followed by 10 digits, starting with 6-9.
+ */
+const isValidIndianPhone = (e164) => {
+  return /^\+91[6-9]\d{9}$/.test(e164);
 };
 
 const hashPassword = (password, salt) =>
@@ -82,8 +101,8 @@ router.post('/send-otp', async (req, res) => {
     const to = toE164(phone);
     const selectedChannel = String(channel || TWILIO_VERIFY_CHANNEL).toLowerCase();
 
-    if (!to || to.length < 8) {
-      return res.status(400).json({ success: false, message: 'Valid phone number is required' });
+    if (!to || !isValidIndianPhone(to)) {
+      return res.status(400).json({ success: false, message: 'Only valid Indian mobile numbers (+91) are allowed' });
     }
 
     if (!ALLOWED_CHANNELS.has(selectedChannel)) {
@@ -128,8 +147,8 @@ router.post('/verify-otp', async (req, res) => {
     const otp = String(code || '').trim();
     const expectedLength = getOtpLength();
 
-    if (!to || to.length < 8) {
-      return res.status(400).json({ success: false, message: 'Valid phone number is required' });
+    if (!to || !isValidIndianPhone(to)) {
+      return res.status(400).json({ success: false, message: 'Only valid Indian mobile numbers (+91) are allowed' });
     }
 
     if (!otp) {
@@ -179,8 +198,8 @@ router.post('/login', async (req, res) => {
     const { phone } = req.body;
     const normalizedPhone = toE164(phone);
     
-    if (!normalizedPhone) {
-      return res.status(400).json({ success: false, message: 'Phone number is required' });
+    if (!normalizedPhone || !isValidIndianPhone(normalizedPhone)) {
+      return res.status(400).json({ success: false, message: 'Only valid Indian mobile numbers (+91) are allowed' });
     }
 
     // Upsert means: find by phone. If exists, update lastLogin. If not, create it.
@@ -261,8 +280,8 @@ router.put('/profile', async (req, res) => {
   try {
     const { phone, name, email, profilePicBase64 } = req.body;
     const normalizedPhone = toE164(phone);
-    if (!normalizedPhone) {
-      return res.status(400).json({ success: false, message: 'Phone number is required to update profile' });
+    if (!normalizedPhone || !isValidIndianPhone(normalizedPhone)) {
+      return res.status(400).json({ success: false, message: 'Only valid Indian mobile numbers (+91) are allowed' });
     }
     const user = await DeliveryUser.findOneAndUpdate(
       { phone: normalizedPhone },

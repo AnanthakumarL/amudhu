@@ -1,65 +1,85 @@
-@import url('https://fonts.googleapis.com/css2?family=Outfit:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap');
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-
 @layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    font-family: 'DM Sans', Inter, sans-serif;
+    background-color: #F9F8F6;
+    color: #1c1917;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  h1, h2, h3, h4, h5 {
+    font-family: 'Cormorant Garamond', Georgia, serif;
+  }
   * {
     box-sizing: border-box;
-    margin: 0;
-    padding: 0;
   }
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #f5f5f4;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #718d3e;
+    border-radius: 3px;
+  }
+}
 
-  /* Exported auth flow screens (ported from /login) were authored assuming
-     `box-sizing: content-box`. Keep the main Client app on `border-box`, and
-     opt only those screens into content-box via a wrapper class. */
-  .exported-login-scope,
-  .exported-login-scope * {
-    box-sizing: content-box;
+@layer components {
+  .btn-primary {
+    @apply bg-olive-700 text-white px-7 py-3 rounded-full font-body font-semibold text-sm
+           tracking-wide hover:bg-olive-800 active:scale-95 transition-all duration-200
+           shadow-md hover:shadow-lg;
   }
+  .btn-outline {
+    @apply border-2 border-olive-700 text-olive-700 px-7 py-3 rounded-full font-body font-semibold
+           text-sm tracking-wide hover:bg-olive-700 hover:text-white active:scale-95
+           transition-all duration-200;
+  }
+  .btn-ghost {
+    @apply text-stone-600 px-5 py-2 rounded-full font-body font-medium text-sm
+           hover:bg-stone-100 active:scale-95 transition-all duration-200;
+  }
+  .card {
+    @apply bg-white rounded-2xl shadow-sm hover:shadow-md transition-shadow duration-300;
+  }
+  .section-title {
+    @apply font-display text-3xl md:text-4xl font-bold text-stone-900 leading-tight;
+  }
+  .section-subtitle {
+    @apply font-body text-stone-500 text-base md:text-lg leading-relaxed;
+  }
+  .input-field {
+    @apply w-full px-4 py-3 rounded-xl border border-stone-200 bg-white font-body text-sm
+           text-stone-900 placeholder-stone-400 focus:outline-none focus:ring-2
+           focus:ring-olive-500 focus:border-transparent transition-all duration-200;
+  }
+  .badge {
+    @apply inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold font-body;
+  }
+}
 
-  h1,
-  h2,
-  h3,
-  h4,
-  h5,
-  h6 {
-    font-size: revert;
-    font-weight: revert;
-    margin: 0;
-    padding: 0;
-  }
+/* Radial glow for hero */
+.hero-glow {
+  background: radial-gradient(ellipse 70% 60% at 70% 50%, rgba(113,141,62,0.12) 0%, transparent 70%);
+}
 
-  body {
-    font-family: inherit;
-    background: transparent;
-  }
-
-  a {
-    text-decoration: none;
-    color: inherit;
-  }
-
-  button,
-  input,
-  textarea,
-  select {
-    all: revert;
-    outline: none;
-    background: transparent;
-    font: revert;
-  }
-
-  ul,
-  ol {
-    list-style: none;
-  }
-
-  img {
-    max-width: 100%;
-    height: auto;
-    display: block;
-  }
+/* Marquee scroll */
+@keyframes marquee {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+.marquee-track {
+  animation: marquee 28s linear infinite;
+  display: flex;
+  width: max-content;
+}
+.marquee-track:hover {
+  animation-play-state: paused;
 }

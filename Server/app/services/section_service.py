@@ -94,3 +94,10 @@ class SectionService:
             self.db.rollback()
             logger.error(f"Error deleting section: {e}")
             raise DatabaseException(f"Failed to delete section: {e!s}")
+
+    # Aliases expected by the endpoint layer
+    def create_section(self, item): return self.create(item)
+    def get_section(self, section_id): return self.get(section_id)
+    def list_sections(self, page, page_size, parent_id=None): return self.list(page, page_size)
+    def update_section(self, section_id, item): return self.update(section_id, item)
+    def delete_section(self, section_id): return self.delete(section_id)

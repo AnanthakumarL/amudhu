@@ -111,8 +111,7 @@ export function startControlServer(waClient) {
 
   // ── Clear history for a user ──────────────────────────────────────────────
   app.post("/api/chats/:phone/clear", (req, res) => {
-    const from = req.params.phone + "@s.whatsapp.net";
-    clearHistory(from);
+    clearHistory(req.params.phone);
     res.json({ success: true });
   });
 

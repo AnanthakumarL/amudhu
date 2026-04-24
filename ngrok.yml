@@ -1,0 +1,8 @@
+version: "3"
+authtoken: 2yv8PFeRUuxsyCFzBr4X5feHuL2_AUTQodE7hrKc3kdPTP1r
+
+tunnels:
+  server:
+    proto: http
+    addr: 7999
+    domain: lilliana-noncirculating-willow.ngrok-free.dev
