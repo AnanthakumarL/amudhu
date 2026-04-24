@@ -7,7 +7,7 @@ import express from "express";
 import QRCode from "qrcode";
 import { getChatLog, getAllChatSummaries, getProviderStatus, clearHistory } from "./ai.js";
 
-const PORT = parseInt(process.env.BOT_SERVER_PORT || "7998", 10);
+const PORT = parseInt(process.env.PORT || process.env.BOT_SERVER_PORT || "7998", 10);
 const ADMIN_ORIGINS = (process.env.ADMIN_ORIGINS || "http://localhost:5173,http://localhost:5174,http://localhost:3000").split(",").map(s => s.trim());
 
 export function startControlServer(waClient) {

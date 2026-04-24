@@ -32,13 +32,14 @@ services:
         sync: false
 
   # ── WhatsApp AI Bot ────────────────────────────────────────────────────────────
-  - type: worker
+  - type: web
     name: amudhu-whatsapp-bot
     runtime: node
     rootDir: whatsapp-mcp
     buildCommand: npm install
     startCommand: node src/bot.js
     plan: free
+    healthCheckPath: /api/status
     envVars:
       - key: BACKEND_API_URL
         value: https://amudhu-api.onrender.com
