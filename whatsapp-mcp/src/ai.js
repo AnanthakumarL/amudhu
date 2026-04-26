@@ -9,7 +9,8 @@
 
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import OpenAI from "openai";
-import { readFileSync, existsSync } from "fs";
+import Anthropic from "@anthropic-ai/sdk";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -53,8 +54,26 @@ const GEMINI_MODELS = (process.env.GEMINI_FALLBACK_MODELS || process.env.GEMINI_
 const DEEPSEEK_KEY   = process.env.DEEPSEEK_API_KEY  || "";
 const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || "deepseek-chat";
 
-if (!GEMINI_KEYS.length && !DEEPSEEK_KEY) {
-  throw new Error("No AI API keys found. Set GEMINI_API_KEYS or DEEPSEEK_API_KEY in .env");
+const CLAUDE_KEY   = process.env.CLAUDE_API_KEY || "";
+const CLAUDE_MODEL = process.env.CLAUDE_MODEL || "claude-haiku-4-5-20251001";
+
+const OPENAI_KEY   = process.env.OPENAI_API_KEY || "";
+let OPENAI_TEXT_MODEL = process.env.OPENAI_TEXT_MODEL || "gpt-4.1-nano";
+
+export function getOpenAIModel() { return OPENAI_TEXT_MODEL; }
+export function setOpenAIModel(model) {
+  OPENAI_TEXT_MODEL = model;
+  console.error(`[AI] OpenAI model set to: ${model}`);
+}
+// Token limits per message type
+const CLAUDE_LIMITS = {
+  text:  { maxInputChars: 50 * 4,   maxOutputTokens: 100  }, // 50 input tokens (~200 chars)
+  audio: { maxInputChars: 6000 * 4, maxOutputTokens: 500  }, // 6k input tokens
+  image: { maxInputChars: 2000 * 4, maxOutputTokens: 500  }, // 2k input tokens
+};
+
+if (!GEMINI_KEYS.length && !DEEPSEEK_KEY && !CLAUDE_KEY && !OPENAI_KEY) {
+  throw new Error("No AI API keys found. Set GEMINI_API_KEYS, DEEPSEEK_API_KEY, CLAUDE_API_KEY, or OPENAI_API_KEY in .env");
 }
 
 // ── Pricing table (USD per 1M tokens) ────────────────────────────────────────
@@ -64,6 +83,10 @@ const PRICING = {
   "gemini-2.0-flash":      { input: 0.10,   output: 0.40  },
   "gemini-1.5-flash":      { input: 0.075,  output: 0.30  },
   "deepseek-chat":         { input: 0.27,   output: 1.10  },
+  "gpt-5-nano":            { input: 0.05,   output: 0.40  },
+  "gpt-4o-audio-preview":  { input: 2.50,   output: 10.00 },
+  "gpt-4o":                { input: 2.50,   output: 10.00 },
+  "gpt-4o-mini":           { input: 0.15,   output: 0.60  },
 };
 const DEFAULT_GEMINI_PRICE = { input: 0.10, output: 0.40 };
 const USD_TO_INR = 84.0;
@@ -91,42 +114,107 @@ const deepseek = DEEPSEEK_KEY
   ? new OpenAI({ baseURL: "https://api.deepseek.com", apiKey: DEEPSEEK_KEY })
   : null;
 
+// ── Claude client ─────────────────────────────────────────────────────────────
+const claudeClient = CLAUDE_KEY ? new Anthropic({ apiKey: CLAUDE_KEY }) : null;
+
+// ── OpenAI (GPT) client ───────────────────────────────────────────────────────
+const openaiClient = OPENAI_KEY ? new OpenAI({ apiKey: OPENAI_KEY }) : null;
+
 // ── System prompt ─────────────────────────────────────────────────────────────
 const SYSTEM_PROMPT = `You are the WhatsApp assistant for Amudhu Ice Creams, Chennai.
 
-LANGUAGE: Always reply in the same language the customer uses. If they mix languages (e.g. Tamil + English), match their style.
+LANGUAGE:
+- Default language is English. Always start and reply in English.
+- Only switch language if the customer writes in a different language (Tamil, Hindi, etc.).
+- Once switched, continue in that language for the rest of the conversation.
+- If they switch back to English, reply in English again.
 
-PERSONALITY: Warm, helpful, natural. Never use templated or robotic messages. Write like a friendly shop assistant texting on WhatsApp — short, clear, with emojis where appropriate.
+REPLY STYLE:
+- On the customer's very first message, start with a warm one-line greeting before showing the menu. Example: "Welcome to Amudhu Ice Creams! 🍦 Here's our menu:"
+- For all follow-up messages, skip greetings — reply directly.
+- Short replies — 1 to 4 lines max.
+- No filler phrases or sign-offs ("Hope that helps!", "Feel free to ask!", etc.).
+- Only give information the customer asked for.
 
-YOU HAVE TOOLS — use them proactively:
-- get_products: Call this EVERY TIME you need to show any product or price. NEVER mention, list, or describe any product from memory or imagination — only use what get_products returns. If you have not called get_products yet, call it immediately before responding about products.
-- user_management: Use this for anything related to the customer's own account — view profile, update name/address/email, delete account, verify their info.
-- order_management: Use this for creating, viewing, updating, or cancelling orders. Always call get_products first to resolve product IDs before creating an order.
+TOOLS — call silently, never mention to customer:
+- get_products: MUST call before mentioning any product, price, or flavour. Never invent products.
+- user_management: get_profile, create_user, update_user.
+- order_management: create_order, list_orders, cancel_order, etc.
 
-CRITICAL: You do NOT know what products exist. You MUST call get_products before mentioning any flavour, price, or item. Never guess or invent product names.
+PRODUCT RULE — CRITICAL:
+- You only sell ice creams. Never discuss or suggest anything outside of ice creams, orders, or delivery.
+- When a customer greets you or starts a conversation (hi, hello, hai, வணக்கம், etc.), call get_products immediately and show the full menu as your first reply. Do not ask "what would you like?" — just show the menu.
+- Call get_products whenever the customer asks about ANY of these (or similar words): menu, products, ice cream, ice creams, flavours, flavors, varieties, items, what do you have, what's available, list, show me, tell me, enna irukku, என்ன இருக்கு, etc.
+- After calling get_products, your reply to the customer MUST be exactly the value of the "formatted_menu" field from the tool result. Paste it as-is. Do NOT write "here are our products" or any other sentence before or after it — just the formatted_menu text, nothing else.
+- NEVER reply about products from memory. You have zero knowledge of what products exist until you call get_products.
 
-CONVERSATION STYLE (IMPORTANT):
-- Never force the customer to reply in a specific format.
-- If you ask the customer to pick from a list and they ask a question instead, answer their question naturally, then gently continue where you left off.
-- Accept product choices in ANY form: number ("1", "one"), name ("chocolate"), partial name ("choco"), emoji, etc. Use get_products to resolve to the actual product ID.
-- If they say something ambiguous, make your best guess and confirm: "I'm adding Chocolate Fudge — that right? 😊"
+STOCK RULES:
+- If a product has inventory_quantity = 0: say it is out of stock and show available alternatives with their stock count.
+- If a product has inventory_quantity > 0 but customer wants more than available: say exactly how many are available (e.g. "Only 3 available") and ask them to adjust quantity.
+- Never allow ordering more than the available inventory_quantity.
 
-ORDER FLOW (handle naturally in conversation — no fixed steps):
-1. Understand what they want (call get_products to match IDs and prices).
-2. Collect name + delivery address (check user_management for saved profile first — skip if already known).
-3. Ask for the exact delivery date AND time (e.g. "When should we deliver? Please give a date and time like 'tomorrow at 3pm' or '25 April, 6:30pm'"). This is REQUIRED — do not skip it or make it optional.
-4. Show a natural order summary including the delivery date/time and ask them to confirm.
-5. On confirmation, call order_management with action "create_order" and pass the delivery_datetime field.
+DELIVERY AREA — CHENNAI ONLY:
+- Delivery is available only within Chennai and its surrounding areas (Tambaram, Chromepet, Pallavaram, Guindy, Velachery, Adyar, Besant Nagar, T.Nagar, Anna Nagar, Kodambakkam, Porur, Ambattur, Avadi, etc.).
+- If the customer gives an address outside Chennai and its surroundings, politely decline and say delivery is only within Chennai and nearby areas.
+- Always confirm the exact street address and area/landmark for delivery — a vague address like "Chennai" is not enough.
 
-STOCK: If inventory_quantity is 0, tell the customer and suggest alternatives.
+DATE & TIME VALIDATION:
+- Today's date is always the current date. Never accept a delivery date in the past.
+- If the customer gives a past date, tell them it has already passed and ask them to choose a future date and time.
+- Require both date AND exact time (e.g. "tomorrow 5pm" or "27 April, 3:30pm"). Do not proceed without both.
 
-MEDIA: You can see images and hear voice messages the customer sends. If a customer sends a voice message, understand what they said and reply naturally — NEVER show timestamps, VTT formatting (00:00:03.120 --> 00:00:07.930), or any transcript formatting. Just respond to what they meant, as if it was a normal text message. If a customer sends a photo, describe what you see and respond helpfully. If the media is unclear, politely ask them to clarify.
+ORDER FLOW — ONE QUESTION PER MESSAGE:
+Call get_profile and get_products silently and immediately — never tell the customer you are doing it.
+
+Required pieces before placing an order:
+  [A] Product + quantity
+  [B] Customer full name
+  [C] Exact delivery address (street, area, Chennai)
+  [D] Delivery date AND time (must be a future date/time)
+
+STOCK CHECK — do this silently:
+  → After the customer picks a product, check inventory_quantity from the get_products result immediately.
+  → If stock = 0 or less than requested quantity:
+     Reply: "Sorry, [product name] is currently out of stock. If you still want it, please give us a call. Otherwise, would you like to order something else? 🍦"
+     Do NOT proceed with the order. Do NOT say "please wait while I check".
+  → If stock is available: proceed immediately to collect the next missing piece.
+
+CRITICAL RULES:
+  → Read the full conversation history before every reply. Any piece [A][B][C][D] already given is KNOWN — never ask for it again.
+  → Treat voice message transcriptions as plain text — same information as typed messages.
+  → NEVER invent or assume a quantity. If the customer has not stated a quantity, ask for it. Never default to any number like 1, 10, or 50.
+  → When the customer names a product (even partial: "pot kulfi", "choco", "mango"), match it to the closest product from get_products and proceed — do not ask "which product?" again.
+  → Never say "please wait", "let me check", "I'll verify", or imply any background task.
+  → Ask for ONLY ONE missing piece per message. Never combine two questions.
+  → Order of asking for missing pieces: A (product) → A (quantity, if not given) → B → C → D
+  → Once all 4 pieces are collected and stock is confirmed, show the confirmation summary immediately.
+
+CONFIRMATION SUMMARY FORMAT (use exactly this):
+*Order Summary*
+
+👤 Name: [customer full name]
+📱 Phone: [use the phone from CUSTOMER CONTEXT — never ask the customer for it]
+🍦 [Product] x[qty] — ₹[price]
+📍 Address: [full delivery address]
+🕐 Delivery: [date & time]
+💰 Total: ₹[total]
+
+Reply *Yes* to confirm or *No* to cancel.
+
+ON CONFIRMATION:
+  → All data passed to create_order and create_user/update_user MUST be in English only — name, address, notes, everything. If the customer gave their name or address in Tamil script, transliterate it to English before storing (e.g. "ராஜேஷ்" → "Rajesh", "அண்ணா நகர்" → "Anna Nagar").
+  → Call create_order with all details in English.
+  → Then call create_user (new customer) or update_user (if name/address changed).
+
+MEDIA: For voice messages, respond naturally — never show transcripts. Extract any of the 4 order pieces mentioned and skip asking for those.
 
 NEVER:
-- Say "I'll fetch", "let me check", "I'll arrange" or imply a background task.
-- Show raw JSON or technical data.
-- Give rigid templated messages. Be conversational.
-- Ask the customer to type specific keywords or numbers unless it genuinely helps clarity.`;
+- Invent products, prices, or order details not from the database.
+- Use placeholder names like "WhatsApp Customer".
+- Ask for 2 or more things in one message.
+- Accept a past delivery date.
+- Accept a delivery address outside Chennai and surroundings.
+- Create an order without all 4 pieces confirmed and validated.`;
 
 // ── Tool declarations (shared between Gemini and DeepSeek) ────────────────────
 const TOOL_DECLARATIONS = [
@@ -239,8 +327,22 @@ async function executeTool(name, args, phone) {
   try {
     switch (name) {
       case "get_products": {
-        const products = await fetchProducts();
-        return { products };
+        // Use cache to avoid redundant backend calls within 5 minutes
+        if (!productsCache || Date.now() - productsCacheTs > PRODUCTS_TTL) {
+          productsCache = await fetchProducts();
+          productsCacheTs = Date.now();
+        }
+        const products = productsCache;
+        const lines = products.map((p, i) => {
+          const stock = p.inventory_quantity ?? p.stock ?? 0;
+          const stockStr = stock > 0 ? `${stock} available` : "_Out of stock_";
+          return `${i + 1}. ${p.name} — ₹${p.price} (${stockStr})`;
+        });
+        const formatted = `*🍦 Amudhu Ice Creams Menu*\n\n${lines.join("\n")}`;
+        // Return ONLY the formatted string + product_ids for ordering reference.
+        // Do NOT return the raw products array — forces the model to use formatted_menu as-is.
+        const product_ids = products.map(p => ({ id: p.id, name: p.name, price: p.price, stock: p.inventory_quantity ?? p.stock ?? 0 }));
+        return { formatted_menu: formatted, product_ids, instruction: "Send the formatted_menu text exactly as-is to the customer. Do not paraphrase or summarize it." };
       }
       case "user_management":  return await handleUserManagement(args, phone);
       case "order_management": return await handleOrderManagement(args, phone);
@@ -258,15 +360,20 @@ async function handleUserManagement(args, callerPhone) {
 
   switch (args.action) {
     case "get_profile": {
+      const cached = getCachedProfile(p);
+      if (cached) return cached;
       const account = await fetchAccountByPhone(p);
-      if (!account) return { found: false };
-      return {
-        found: true, id: account.id, name: account.name,
-        email:   account.email?.endsWith("@wa.local") ? null : account.email,
-        address: account.attributes?.address || null,
-        phone:   account.attributes?.phone   || p,
-        role:    account.role, is_active: account.is_active,
-      };
+      const result = account
+        ? {
+            found: true, id: account.id, name: account.name,
+            email:   account.email?.endsWith("@wa.local") ? null : account.email,
+            address: account.attributes?.address || null,
+            phone:   account.attributes?.phone   || p,
+            role:    account.role, is_active: account.is_active,
+          }
+        : { found: false };
+      setCachedProfile(p, result);
+      return result;
     }
     case "verify_user": {
       const account = await fetchAccountByPhone(p);
@@ -282,6 +389,7 @@ async function handleUserManagement(args, callerPhone) {
         is_active: true,
         attributes: { phone: p, address: args.address || null },
       });
+      invalidateProfile(p);
       return { success: true, id: created.id };
     }
     case "update_user": {
@@ -307,6 +415,7 @@ async function handleUserManagement(args, callerPhone) {
         };
       }
       await updateAccount(accountId, payload);
+      invalidateProfile(p);
       return { success: true };
     }
     case "delete_user": {
@@ -389,8 +498,48 @@ async function handleOrderManagement(args, callerPhone) {
   }
 }
 
-// ── Per-user conversation history (Gemini format) ─────────────────────────────
-const histories = new Map();
+// ── Global provider override ('auto' | 'gemini' | 'deepseek' | 'claude') ──────
+let activeProvider = "auto";
+
+export function setActiveProvider(p) {
+  const valid = ["auto", "gemini", "deepseek", "claude", "gpt"];
+  if (!valid.includes(p)) throw new Error(`Invalid provider: ${p}. Must be one of: ${valid.join(", ")}`);
+  activeProvider = p;
+  console.error(`[AI] Provider set to: ${p}`);
+}
+
+export function getActiveProvider() { return activeProvider; }
+
+// ── Persistence paths ─────────────────────────────────────────────────────────
+const DATA_ROOT     = process.env.DATA_ROOT || path.join(__envDir, "..");
+const DATA_DIR      = path.join(DATA_ROOT, "data");
+const HISTORY_FILE  = path.join(DATA_DIR, "chat_history.json");
+const LOGS_FILE     = path.join(DATA_DIR, "chat_logs.json");
+const STATS_FILE    = path.join(DATA_DIR, "cumulative_stats.json");
+
+function ensureDataDir() {
+  if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
+}
+
+function readJSON(file, fallback) {
+  try { if (existsSync(file)) return JSON.parse(readFileSync(file, "utf8")); } catch {}
+  return fallback;
+}
+
+// Debounced writer — batches rapid saves into one disk write
+function makeDebounced(fn, ms = 2000) {
+  let t = null;
+  return (...args) => { if (t) clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+}
+
+// ── Per-user conversation history (persisted) ─────────────────────────────────
+const _historiesRaw = readJSON(HISTORY_FILE, {});
+const histories = new Map(Object.entries(_historiesRaw));
+
+const _saveHistories = makeDebounced(() => {
+  ensureDataDir();
+  writeFileSync(HISTORY_FILE, JSON.stringify(Object.fromEntries(histories), null, 2));
+});
 
 function getHistory(from) {
   if (!histories.has(from)) histories.set(from, []);
@@ -399,7 +548,40 @@ function getHistory(from) {
 
 function trimHistory(from) {
   const h = histories.get(from) || [];
-  if (h.length > 30) h.splice(0, h.length - 30);
+  if (h.length > 16) h.splice(0, h.length - 16);
+  _saveHistories();
+}
+
+// ── Profile cache — avoid get_profile tool call on every message ──────────────
+const profileCache  = new Map(); // phone → { data, ts }
+const PROFILE_TTL   = 10 * 60 * 1000; // 10 minutes
+
+// Products cache — same list for everyone, refresh every 5 min
+let productsCache = null;
+let productsCacheTs = 0;
+const PRODUCTS_TTL = 5 * 60 * 1000;
+
+export function invalidateProfile(phone) {
+  profileCache.delete(phone.replace(/\D/g, "").slice(-10));
+}
+
+function getCachedProfile(phone) {
+  const key = phone.replace(/\D/g, "").slice(-10);
+  const entry = profileCache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.ts > PROFILE_TTL) { profileCache.delete(key); return null; }
+  return entry.data;
+}
+
+function setCachedProfile(phone, data) {
+  const key = phone.replace(/\D/g, "").slice(-10);
+  profileCache.set(key, { data, ts: Date.now() });
+}
+
+// Build a per-user system prompt that injects the customer's known phone number
+function buildSystemPrompt(phone) {
+  const phone10 = phone.replace(/\D/g, "").slice(-10);
+  return SYSTEM_PROMPT + `\n\nCUSTOMER CONTEXT:\n- Phone: ${phone10} (use this automatically — never ask the customer for their phone number)\n- Call get_profile with this phone at the start of every new conversation to check for saved name and address. If found, pre-fill those details silently — do not ask the customer for info you already have.`;
 }
 
 // Convert Gemini-format history to OpenAI messages (text turns only)
@@ -416,12 +598,30 @@ function historyToOpenAI(history) {
   return result;
 }
 
-// ── Token usage tracking ──────────────────────────────────────────────────────
-const chatLogs = new Map();
+// ── Token usage tracking (persisted) ─────────────────────────────────────────
+const _logsRaw  = readJSON(LOGS_FILE, {});
+const chatLogs  = new Map(Object.entries(_logsRaw));
+
+// Cumulative stats — only ever incremented, never decremented even on clearHistory
+const cumulativeStats = readJSON(STATS_FILE, { inputTokens: 0, outputTokens: 0, costUSD: 0, costINR: 0 });
+
+const _saveLogs = makeDebounced(() => {
+  ensureDataDir();
+  writeFileSync(LOGS_FILE, JSON.stringify(Object.fromEntries(chatLogs), null, 2));
+});
+
+const _saveStats = makeDebounced(() => {
+  ensureDataDir();
+  writeFileSync(STATS_FILE, JSON.stringify(cumulativeStats, null, 2));
+}, 3000);
 
 export function getChatLog(phone) {
   const key = phone.replace(/[^0-9]/g, "");
   return chatLogs.get(key) || [];
+}
+
+export function getCumulativeStats() {
+  return { ...cumulativeStats };
 }
 
 export function getAllChatSummaries() {
@@ -453,7 +653,7 @@ function calcCost(provider, model, inputTokens, outputTokens) {
   return { costUSD: +costUSD.toFixed(6), costINR: +(costUSD * USD_TO_INR).toFixed(4) };
 }
 
-function recordUsage(from, { userText, reply, provider, model, inputTokens, outputTokens }) {
+function recordUsage(from, { userText, reply, provider, model, inputTokens, outputTokens, mediaType = null }) {
   const phone = from.replace(/[^0-9]/g, "");
   if (!chatLogs.has(phone)) chatLogs.set(phone, []);
   const logs = chatLogs.get(phone);
@@ -462,10 +662,20 @@ function recordUsage(from, { userText, reply, provider, model, inputTokens, outp
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     timestamp: new Date().toISOString(),
     userText, reply, provider, model,
+    mediaType,
     inputTokens, outputTokens,
     costUSD, costINR,
   });
-  if (logs.length > 500) logs.splice(0, logs.length - 500);
+  if (logs.length > 1000) logs.splice(0, logs.length - 1000);
+
+  // Update cumulative totals — these never get cleared
+  cumulativeStats.inputTokens  += inputTokens;
+  cumulativeStats.outputTokens += outputTokens;
+  cumulativeStats.costUSD      = +(cumulativeStats.costUSD + costUSD).toFixed(6);
+  cumulativeStats.costINR      = +(cumulativeStats.costINR + costINR).toFixed(4);
+
+  _saveLogs();
+  _saveStats();
 }
 
 // ── Token footer appended to every reply ─────────────────────────────────────
@@ -488,7 +698,7 @@ async function runDeepSeekAgent(from, phone, userText) {
 
   const history   = getHistory(from);
   const messages  = [
-    { role: "system", content: SYSTEM_PROMPT },
+    { role: "system", content: buildSystemPrompt(phone) },
     ...historyToOpenAI(history),
     { role: "user", content: userText },
   ];
@@ -576,7 +786,7 @@ async function runGeminiAgent(from, phone, userText, media = null) {
         const genAI        = new GoogleGenerativeAI(apiKey);
         const geminiModel  = genAI.getGenerativeModel({
           model,
-          systemInstruction: SYSTEM_PROMPT,
+          systemInstruction: buildSystemPrompt(phone),
           tools: [{ functionDeclarations: TOOL_DECLARATIONS }],
         });
 
@@ -602,6 +812,7 @@ async function runGeminiAgent(from, phone, userText, media = null) {
             recordUsage(from, {
               userText: userText || (media ? `[${media.mimeType?.split("/")[0] || "media"}]` : ""),
               reply, provider: "gemini", model, inputTokens, outputTokens,
+              mediaType: media?.mimeType?.split("/")[0] || null,
             });
 
             const switchNote = switchNotes.length
@@ -671,43 +882,359 @@ async function runGeminiAgent(from, phone, userText, media = null) {
   throw new Error("All Gemini models and keys exhausted");
 }
 
+// Claude tool definitions (Anthropic SDK format)
+const CLAUDE_TOOLS = [
+  {
+    name: "get_products",
+    description: "Fetch the current product menu from the database. Returns a list of products with IDs, names, prices, descriptions, and inventory_quantity. Call this to resolve a product name or number the customer mentioned into an actual product_id.",
+    input_schema: { type: "object", properties: {}, required: [] },
+  },
+  {
+    name: "user_management",
+    description: `Manage customer accounts. Supports the following actions:
+- get_profile: Look up the customer's saved profile by phone.
+- create_user: Register a new customer account.
+- update_user: Update profile fields (name, email, address, is_active).
+- delete_user: Permanently delete the customer's account.
+- verify_user: Check whether a customer's phone is already registered.
+- get_user_by_id: Fetch full account details by account ID.
+- list_orders_for_user: Get all recent orders for this customer.`,
+    input_schema: {
+      type: "object",
+      required: ["action"],
+      properties: {
+        action: { type: "string", enum: ["get_profile", "create_user", "update_user", "delete_user", "verify_user", "get_user_by_id", "list_orders_for_user"] },
+        phone: { type: "string" }, account_id: { type: "string" },
+        name: { type: "string" }, email: { type: "string" },
+        address: { type: "string" }, is_active: { type: "boolean" }, role: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "order_management",
+    description: `Manage orders. Supports: create_order, get_order, get_order_by_number, list_orders, update_order_status, update_order_notes, update_shipping_address, cancel_order, delete_order, get_order_statistics.`,
+    input_schema: {
+      type: "object",
+      required: ["action"],
+      properties: {
+        action: { type: "string", enum: ["create_order", "get_order", "get_order_by_number", "list_orders", "update_order_status", "update_order_notes", "update_shipping_address", "cancel_order", "delete_order", "get_order_statistics"] },
+        phone: { type: "string" }, order_id: { type: "string" }, order_number: { type: "string" },
+        customer_name: { type: "string" }, customer_phone: { type: "string" }, customer_email: { type: "string" },
+        shipping_address: { type: "string" }, billing_address: { type: "string" },
+        delivery_datetime: { type: "string" }, notes: { type: "string" },
+        subtotal: { type: "number" }, total: { type: "number" },
+        items: { type: "array", items: { type: "object", required: ["product_id", "product_name", "quantity", "price", "subtotal"], properties: { product_id: { type: "string" }, product_name: { type: "string" }, quantity: { type: "number" }, price: { type: "number" }, subtotal: { type: "number" } } } },
+        status: { type: "string", enum: ["pending", "assigned", "processing", "shipped", "delivered", "cancelled"] },
+        new_notes: { type: "string" }, new_shipping_address: { type: "string" },
+      },
+    },
+  },
+];
+
+// ── Claude agent (token limits vary by media type) ────────────────────────────
+async function runClaudeAgent(from, phone, userText, media = null) {
+  if (!claudeClient) throw new Error("Claude not configured");
+
+  const mediaType = media?.mimeType?.startsWith("audio") ? "audio"
+                  : media?.mimeType?.startsWith("image") ? "image"
+                  : "text";
+  const limits = CLAUDE_LIMITS[mediaType];
+
+  const truncatedText = (userText || "").length > limits.maxInputChars
+    ? (userText || "").slice(0, limits.maxInputChars) + "…"
+    : (userText || "");
+
+  let userContent;
+  if (media?.data && mediaType === "image") {
+    userContent = [
+      { type: "image", source: { type: "base64", media_type: media.mimeType, data: media.data } },
+      { type: "text",  text: truncatedText || "What do you see?" },
+    ];
+  } else {
+    userContent = truncatedText || "[media message]";
+  }
+
+  const messages = [{ role: "user", content: userContent }];
+  let totalInput = 0;
+  let totalOutput = 0;
+  let MAX_ROUNDS = 6;
+
+  while (MAX_ROUNDS-- > 0) {
+    const res = await claudeClient.messages.create({
+      model: CLAUDE_MODEL,
+      max_tokens: limits.maxOutputTokens,
+      system: buildSystemPrompt(phone),
+      tools: CLAUDE_TOOLS,
+      messages,
+    });
+
+    totalInput  += res.usage?.input_tokens  || 0;
+    totalOutput += res.usage?.output_tokens || 0;
+
+    const toolUseBlocks = res.content.filter((b) => b.type === "tool_use");
+
+    if (res.stop_reason !== "tool_use" || toolUseBlocks.length === 0) {
+      const reply = res.content.filter((b) => b.type === "text").map((b) => b.text).join("").trim();
+      recordUsage(from, {
+        userText: userText || (media ? `[${mediaType}]` : ""),
+        reply, provider: "claude", model: CLAUDE_MODEL,
+        inputTokens: totalInput, outputTokens: totalOutput,
+        mediaType: mediaType || null,
+      });
+      return reply;
+    }
+
+    // Execute tool calls
+    messages.push({ role: "assistant", content: res.content });
+
+    const toolResults = await Promise.all(
+      toolUseBlocks.map(async (tb) => {
+        const result = await executeTool(tb.name, tb.input || {}, phone);
+        return { type: "tool_result", tool_use_id: tb.id, content: JSON.stringify(result) };
+      })
+    );
+    messages.push({ role: "user", content: toolResults });
+  }
+
+  throw new Error("Claude: max tool call rounds exceeded");
+}
+
+// ── OpenAI (GPT) agent ────────────────────────────────────────────────────────
+// Audio → Whisper-1 transcription → gpt-5-nano with tools
+// Image → gpt-5-nano vision with tools
+// Text  → gpt-5-nano with tools
+async function runOpenAIAgent(from, phone, userText, media = null) {
+  if (!openaiClient) throw new Error("OpenAI not configured");
+
+  const isAudio = media?.mimeType?.startsWith("audio");
+  const isImage = media?.mimeType?.startsWith("image");
+
+  // ── Audio: transcribe with Whisper first, then run as text ───────────────
+  let effectiveUserText = userText || "";
+  if (isAudio && media?.data) {
+    try {
+      const { toFile } = await import("openai");
+      const audioBuffer = Buffer.from(media.data, "base64");
+      const mimeBase    = (media.mimeType || "").split(";")[0].trim(); // strip codecs suffix
+      const ext = mimeBase.includes("mp3")  ? "mp3"
+                : mimeBase.includes("wav")  ? "wav"
+                : mimeBase.includes("mp4")  ? "mp4"
+                : mimeBase.includes("webm") ? "webm"
+                : mimeBase.includes("flac") ? "flac"
+                : "ogg"; // WhatsApp voice notes are ogg/opus
+
+      const audioFile = await toFile(audioBuffer, `voice.${ext}`, { type: mimeBase || "audio/ogg" });
+      const transcript = await openaiClient.audio.transcriptions.create({
+        model: "gpt-4o-mini-transcribe",
+        file:  audioFile,
+      });
+      effectiveUserText = transcript.text?.trim() || "";
+      console.error(`[Whisper] Transcribed: ${effectiveUserText.substring(0, 120)}`);
+      if (!effectiveUserText) throw new Error("Whisper returned empty transcript");
+    } catch (err) {
+      console.error(`[Whisper] Transcription failed: ${err.message}`);
+      throw err; // bubble up so Gemini fallback can handle it
+    }
+  }
+
+  // ── Chat completions with tool support (text + optional image) ───────────
+  const history  = getHistory(from);
+  const messages = [
+    { role: "system", content: buildSystemPrompt(phone) },
+    ...historyToOpenAI(history),
+  ];
+
+  let userContent;
+  if (isImage && media?.data) {
+    userContent = [
+      { type: "text",      text: effectiveUserText || "What do you see?" },
+      { type: "image_url", image_url: { url: `data:${media.mimeType};base64,${media.data}` } },
+    ];
+  } else {
+    userContent = effectiveUserText || "[message]";
+  }
+  messages.push({ role: "user", content: userContent });
+
+  let totalInput  = 0;
+  let totalOutput = 0;
+  let MAX_ROUNDS  = 4;
+
+  while (MAX_ROUNDS-- > 0) {
+    const res = await openaiClient.chat.completions.create({
+      model:                 OPENAI_TEXT_MODEL,
+      messages,
+      tools:                 OPENAI_TOOLS,
+      // "auto" lets the model decide — but after tool results are in, it should
+      // naturally produce a text reply. Explicitly set for clarity.
+      tool_choice:           "auto",
+    });
+
+    const msg = res.choices[0].message;
+    totalInput  += res.usage?.prompt_tokens     || 0;
+    totalOutput += res.usage?.completion_tokens || 0;
+
+    if (!msg.tool_calls || msg.tool_calls.length === 0) {
+      const reply = (msg.content || "").trim();
+
+      // Reasoning models (gpt-5-nano) sometimes return null content after tool calls.
+      // If that happens, ask it explicitly to produce the final reply.
+      if (!reply) {
+        messages.push({ role: "assistant", content: "" });
+        messages.push({ role: "user", content: "Please provide your final reply to the customer now." });
+        continue;
+      }
+
+      // Store plain transcription text — decorators like 🎙️ confuse the model on re-read
+      history.push({ role: "user",  parts: [{ text: effectiveUserText || userText || "[voice]" }] });
+      history.push({ role: "model", parts: [{ text: reply }] });
+      trimHistory(from);
+      recordUsage(from, {
+        userText: isAudio ? `[voice] ${effectiveUserText}` : (userText || (isImage ? "[image]" : "")),
+        reply, provider: "openai", model: OPENAI_TEXT_MODEL,
+        inputTokens: totalInput, outputTokens: totalOutput,
+        mediaType: isAudio ? "audio" : isImage ? "image" : null,
+      });
+      return reply;
+    }
+
+    messages.push({ role: "assistant", content: msg.content || null, tool_calls: msg.tool_calls });
+
+    const toolResults = await Promise.all(
+      msg.tool_calls.map((tc) => {
+        let args = {};
+        try { args = JSON.parse(tc.function.arguments || "{}"); } catch {}
+        console.error(`[OpenAI tool] ${tc.function.name}(${JSON.stringify(args)})`);
+        return executeTool(tc.function.name, args, phone);
+      })
+    );
+    for (let i = 0; i < msg.tool_calls.length; i++) {
+      messages.push({
+        role: "tool",
+        tool_call_id: msg.tool_calls[i].id,
+        content: JSON.stringify(toolResults[i]),
+      });
+    }
+  }
+
+  throw new Error("OpenAI: max tool call rounds exceeded");
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
  * Main entry point.
- * - Text-only  → DeepSeek (with tool calling), fallback to Gemini
- * - Media      → Gemini only
+ * Provider routing controlled by `activeProvider`:
+ * - 'auto'     → GPT first, then Gemini → DeepSeek → Claude as fallbacks
+ * - 'gpt'      → GPT only (gpt-5-nano text/image, gpt-4o-audio-preview audio)
+ * - 'gemini'   → Gemini only (no fallback)
+ * - 'deepseek' → DeepSeek only (no fallback; media not supported → error)
+ * - 'claude'   → Claude only (no fallback)
  */
 export async function agentReply(from, phone, userText, media = null) {
   const isMediaMessage = !!media;
+  const provider = activeProvider;
 
-  // ── Media path: Gemini only ───────────────────────────────────────────────
-  if (isMediaMessage) {
-    if (!GEMINI_KEYS.length) {
-      throw new Error("No Gemini keys configured — cannot process media messages");
-    }
+  // ── Forced provider mode ──────────────────────────────────────────────────
+  if (provider === "gemini") {
+    if (!GEMINI_KEYS.length) return "⚠️ Gemini is not configured. Please set GEMINI_API_KEYS.";
     try {
       const reply = await runGeminiAgent(from, phone, userText, media);
-      console.error(`[AI:gemini] ${from}: replied (${reply.length} chars)`);
+      console.error(`[AI:gemini-forced] ${from}: replied (${reply.length} chars)`);
       return reply;
     } catch (err) {
-      console.error(`[AI] Gemini failed for media: ${err.message}`);
-      // Return quota-exceeded message to user instead of crashing
-      if (err.message.includes("exhausted") || err.message.includes("quota")) {
-        return "⚠️ *AI Quota Exceeded*\n\nAll Gemini API keys have reached their quota limit. Media messages (images/voice) can't be processed right now.\n\nPlease try again later or send a text message! 🙏";
-      }
-      throw err;
+      console.error(`[AI] Gemini forced failed: ${err.message}`);
+      return `⚠️ *Gemini Error*\n\n${err.message.includes("quota") ? "Quota exceeded." : "Request failed."} Try switching to Auto or another model.`;
     }
   }
 
-  // ── Text path: DeepSeek first, Gemini fallback ────────────────────────────
-  if (deepseek) {
+  if (provider === "deepseek") {
+    if (!deepseek) return "⚠️ DeepSeek is not configured. Please set DEEPSEEK_API_KEY.";
+    if (isMediaMessage) return "⚠️ DeepSeek does not support media messages. Switch to Auto or Gemini for images/voice.";
     try {
       const reply = await runDeepSeekAgent(from, phone, userText);
-      console.error(`[AI:deepseek] ${from}: replied (${reply.length} chars)`);
+      console.error(`[AI:deepseek-forced] ${from}: replied (${reply.length} chars)`);
       return reply;
     } catch (err) {
-      console.error(`[AI] DeepSeek failed: ${err.message} — falling back to Gemini`);
+      console.error(`[AI] DeepSeek forced failed: ${err.message}`);
+      return `⚠️ *DeepSeek Error*\n\nRequest failed. Try switching to Auto or another model.`;
+    }
+  }
+
+  if (provider === "gpt") {
+    if (!openaiClient) return "⚠️ OpenAI is not configured. Please set OPENAI_API_KEY.";
+    try {
+      const reply = await runOpenAIAgent(from, phone, userText, isMediaMessage ? media : null);
+      console.error(`[AI:gpt-forced] ${from}: replied (${reply.length} chars)`);
+      return reply;
+    } catch (err) {
+      console.error(`[AI] GPT forced failed: ${err.message}`);
+      return `⚠️ *GPT Error*\n\n${err.message}`;
+    }
+  }
+
+  if (provider === "claude") {
+    if (!claudeClient) return "⚠️ Claude is not configured. Please set CLAUDE_API_KEY.";
+    const isAudio = media?.mimeType?.startsWith("audio");
+    if (isAudio) {
+      return "⚠️ Claude doesn't support voice messages. Switch to Auto or Gemini in the admin panel to use voice notes. 🎙️";
+    }
+    try {
+      const reply = await runClaudeAgent(from, phone, userText, isMediaMessage ? media : null);
+      console.error(`[AI:claude-forced] ${from}: replied (${reply.length} chars)`);
+      return reply;
+    } catch (err) {
+      console.error(`[AI] Claude forced failed: ${err.message}`);
+      return `⚠️ *Claude Error*\n\nRequest failed. Try switching to Auto or another model.`;
+    }
+  }
+
+  // ── Auto mode: GPT first, then Gemini → DeepSeek → Claude ───────────────
+  if (isMediaMessage) {
+    // 1. GPT — handles text, image, and audio
+    if (openaiClient) {
+      try {
+        const reply = await runOpenAIAgent(from, phone, userText, media);
+        console.error(`[AI:gpt-media] ${from}: replied (${reply.length} chars)`);
+        return reply;
+      } catch (err) {
+        console.error(`[AI] GPT media failed: ${err.message} — falling back to Gemini`);
+      }
+    }
+
+    // 2. Gemini — handles text, image, and audio
+    if (GEMINI_KEYS.length) {
+      try {
+        const reply = await runGeminiAgent(from, phone, userText, media);
+        console.error(`[AI:gemini-media] ${from}: replied (${reply.length} chars)`);
+        return reply;
+      } catch (err) {
+        console.error(`[AI] Gemini media failed: ${err.message}`);
+      }
+    }
+
+    // 3. Claude — images only (no audio)
+    const isImage = media?.mimeType?.startsWith("image");
+    if (claudeClient && isImage) {
+      try {
+        const reply = await runClaudeAgent(from, phone, userText, media);
+        console.error(`[AI:claude-image] ${from}: replied (${reply.length} chars)`);
+        return reply;
+      } catch (err) {
+        console.error(`[AI] Claude image fallback failed: ${err.message}`);
+      }
+    }
+
+    return "⚠️ *AI Quota Exceeded*\n\nAll AI providers failed for this media. Please try again later or send a text message! 🙏";
+  }
+
+  // Auto text path: GPT → Gemini → DeepSeek → Claude
+  if (openaiClient) {
+    try {
+      const reply = await runOpenAIAgent(from, phone, userText, null);
+      console.error(`[AI:gpt] ${from}: replied (${reply.length} chars)`);
+      return reply;
+    } catch (err) {
+      console.error(`[AI] GPT failed: ${err.message} — falling back to Gemini`);
     }
   }
 
@@ -718,24 +1245,102 @@ export async function agentReply(from, phone, userText, media = null) {
       return reply;
     } catch (err) {
       console.error(`[AI] Gemini fallback failed: ${err.message}`);
-      if (err.message.includes("exhausted") || err.message.includes("quota")) {
-        return "⚠️ *AI Quota Exceeded*\n\nAll AI models have reached their quota limit. Please try again in a few minutes! 🙏";
-      }
-      throw err;
     }
   }
 
-  throw new Error("No AI provider available");
+  if (deepseek) {
+    try {
+      const reply = await runDeepSeekAgent(from, phone, userText);
+      console.error(`[AI:deepseek-fallback] ${from}: replied (${reply.length} chars)`);
+      return reply;
+    } catch (err) {
+      console.error(`[AI] DeepSeek fallback failed: ${err.message}`);
+    }
+  }
+
+  if (claudeClient) {
+    try {
+      const reply = await runClaudeAgent(from, phone, userText, null);
+      console.error(`[AI:claude-fallback] ${from}: replied (${reply.length} chars)`);
+      return reply;
+    } catch (err) {
+      console.error(`[AI] Claude fallback failed: ${err.message}`);
+    }
+  }
+
+  return "⚠️ *AI Quota Exceeded*\n\nAll AI models have reached their quota limit. Please try again in a few minutes! 🙏";
+}
+
+// ── Whitelist — allowed phone numbers ────────────────────────────────────────
+const WHITELIST_FILE = path.join(DATA_DIR, "whitelist.json");
+
+function loadWhitelist() {
+  try {
+    if (existsSync(WHITELIST_FILE)) {
+      const data = JSON.parse(readFileSync(WHITELIST_FILE, "utf8"));
+      return new Set(Array.isArray(data) ? data.map(String) : []);
+    }
+  } catch {}
+  return new Set();
+}
+
+function saveWhitelist(set) {
+  try {
+    const dir = path.dirname(WHITELIST_FILE);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    writeFileSync(WHITELIST_FILE, JSON.stringify([...set], null, 2));
+  } catch (err) {
+    console.error("[Whitelist] Save failed:", err.message);
+  }
+}
+
+const _whitelist = loadWhitelist();
+
+export function getWhitelist() {
+  return [..._whitelist];
+}
+
+// Normalize to last 10 digits (drops +91 prefix)
+function normPhone(phone) {
+  return phone.replace(/\D/g, "").slice(-10);
+}
+
+export function addToWhitelist(phone) {
+  const n = normPhone(phone);
+  _whitelist.add(n);
+  saveWhitelist(_whitelist);
+  return n;
+}
+
+export function removeFromWhitelist(phone) {
+  const n = normPhone(phone);
+  const removed = _whitelist.delete(n);
+  if (removed) saveWhitelist(_whitelist);
+  return removed;
+}
+
+/**
+ * Returns true if the number is allowed to use the bot.
+ * STRICT: only numbers in the whitelist are allowed. Empty whitelist = nobody.
+ * Incoming Baileys JIDs are like 919876543210 — we compare last 10 digits.
+ */
+export function isWhitelisted(phone) {
+  const n = normPhone(phone); // last 10 digits
+  if (!n) return false;
+  if (_whitelist.size === 0) return false; // no allowed users configured → block all
+  return _whitelist.has(n);
 }
 
 export function clearHistory(phone) {
   const digits = phone.replace(/[^0-9]/g, "");
-  // Clear chat logs (keyed by digits-only)
+  // Clear chat logs and conversation history — cumulative stats are NOT touched
   chatLogs.delete(digits);
-  // Clear conversation history (keyed by full JID — find by matching digits)
   for (const key of histories.keys()) {
     if (key.replace(/[^0-9]/g, "") === digits) histories.delete(key);
   }
+  invalidateProfile(digits);
+  _saveLogs();
+  _saveHistories();
 }
 
 export function getProviderStatus() {
@@ -747,5 +1352,20 @@ export function getProviderStatus() {
       models: GEMINI_MODELS,
     },
     deepseek: { available: !!deepseek, model: DEEPSEEK_MODEL },
+    claude: { available: !!claudeClient, model: CLAUDE_MODEL, limits: CLAUDE_LIMITS },
+    gpt: { available: !!openaiClient, textModel: OPENAI_TEXT_MODEL, audioModel: "whisper-1" },
+    activeProvider,
   };
+}
+
+// ── Compatibility aliases for index.js (MCP server) ───────────────────────────
+export async function generateReply(from, userText) {
+  const phone = from.replace(/[^0-9]/g, "").slice(-10);
+  return agentReply(from, phone, userText, null);
+}
+
+export async function generateReplyWithData(userText, dataLabel, data) {
+  const syntheticFrom = "mcp@tool";
+  const ctx = `[${dataLabel}]: ${JSON.stringify(data).slice(0, 500)}`;
+  return agentReply(syntheticFrom, "mcp", `${userText}\n\n${ctx}`, null);
 }

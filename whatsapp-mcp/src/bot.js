@@ -1,9 +1,16 @@
 /**
- * Amudhu Ice Creams WhatsApp Bot — simple relay.
- * Every message goes to the AI agent. The AI handles all logic via tool calling.
- * No intent detection, no templates, no state machines here.
+ * Amudhu Ice Creams WhatsApp Bot
  *
- * Run: node src/bot.js
+ * Two-layer design:
+ *   Transport layer  → always uses msg.jid  (full JID like 919876543210@s.whatsapp.net)
+ *   Business layer   → always uses msg.phone (plain number like 919876543210)
+ *
+ * WhatsApp does not use raw phone numbers internally — it uses JIDs (Jabber IDs).
+ * Newer accounts also receive an LID (Linked Identity) instead of a phone-based JID.
+ * whatsapp.js resolves LIDs → real phone numbers before emitting the "message" event,
+ * so by the time we get here msg.phone is always the real number.
+ *
+ * Rule: pass msg.jid to every sock.* call; pass msg.phone to every business call.
  */
 
 import { setDefaultResultOrder } from "dns";
@@ -13,7 +20,7 @@ import { readFileSync, existsSync } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { WhatsAppClient } from "./whatsapp.js";
-import { agentReply, getProviderStatus } from "./ai.js";
+import { agentReply, getProviderStatus, isWhitelisted, getWhitelist } from "./ai.js";
 import { startControlServer } from "./server.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -32,40 +39,80 @@ if (existsSync(envFile)) {
   }
 }
 
+// Keep processed IDs for 5 minutes to block delayed duplicate deliveries from Baileys
+const processedIds = new Map(); // id → timestamp
+const DEDUP_TTL = 5 * 60 * 1000;
+function isDuplicate(id) {
+  const now = Date.now();
+  // Purge old entries
+  for (const [k, ts] of processedIds) if (now - ts > DEDUP_TTL) processedIds.delete(k);
+  if (processedIds.has(id)) return true;
+  processedIds.set(id, now);
+  return false;
+}
+
 const processingSet = new Set();
 const SUPPORTED_MEDIA = new Set(["image", "audio"]);
 
 async function handleMessage(wa, msg) {
-  // Skip if no text AND no supported media
+  // ── Transport-layer filters ───────────────────────────────────────────────
+  // Groups: rawJid ends with @g.us (msg.jid is rebuilt for DMs, so check rawJid)
+  if (msg.rawJid && msg.rawJid.endsWith("@g.us")) return;
+
+  // No usable content
   if (!msg.text && !SUPPORTED_MEDIA.has(msg.mediaType)) return;
-  if (processingSet.has(msg.id)) return;
+
+  // De-duplicate — blocks both rapid re-delivery and delayed re-delivery (up to 5 min)
+  if (isDuplicate(msg.id)) return;
+
+  // ── Business-logic filters (use phone, never jid) ─────────────────────────
+  // msg.phone = resolved plain phone number, e.g. "919345550885"
+  const phone = msg.phone || "";
+  console.error(`📱 [${phone}] raw JID: ${msg.rawJid}`);
+
+  if (!isWhitelisted(phone)) {
+    const allowed = getWhitelist();
+    console.error(`🚫 [${phone}] BLOCKED — not in Allowed Users. Configured: [${allowed.join(", ") || "(none)"}]`);
+    return;
+  }
+  console.error(`✅ [${phone}] Whitelist OK`);
+
   processingSet.add(msg.id);
 
-  const from  = msg.from;
-  const phone = from.replace(/[^0-9]/g, "");
-  const text  = msg.text?.trim() || "";
-  let media   = null;
+  // phone10 = last 10 digits → used for DB / account lookups (Indian numbers)
+  const phone10 = phone.replace(/\D/g, "").slice(-10);
+  const text    = msg.text?.trim() || "";
+  let   media   = null;
 
   try {
     const mediaLabel = msg.mediaType ? ` [${msg.mediaType}]` : "";
-    console.error(`\n📨 [${from}]${mediaLabel} ${text.substring(0, 120)}`);
+    console.error(`\n📨 [${phone}]${mediaLabel} ${text.substring(0, 120)}`);
+
+    // Typing indicator — always send to msg.jid (transport layer)
     await wa.sock.sendPresenceUpdate("composing", msg.jid);
 
-    // Download image/audio bytes for Gemini multimodal
+    // Download image/audio bytes for multimodal AI
     if (SUPPORTED_MEDIA.has(msg.mediaType)) {
       media = await wa.downloadMedia(msg);
       if (!media) console.error(`⚠️  Media download failed for ${msg.id} — proceeding text-only`);
     }
 
-    const reply = await agentReply(from, phone, text, media);
+    // AI receives phone (identity key) and phone10 (DB lookup key)
+    const reply = await agentReply(phone, phone10, text, media);
 
     await wa.sock.sendPresenceUpdate("paused", msg.jid);
-    await wa.sock.sendMessage(msg.jid, { text: reply, quoted: msg.raw });
 
-    const preview = reply.substring(0, 100);
-    console.error(`🤖 ${preview}${reply.length > 100 ? "…" : ""}`);
+    if (!reply || !reply.trim()) {
+      console.error(`⚠️  [${phone}] AI returned empty reply — skipping send`);
+      return;
+    }
+
+    // Always send via msg.jid (transport layer — may differ from phone-based JID)
+    await wa.sock.sendMessage(msg.jid, { text: reply.trim(), quoted: msg.raw });
+
+    console.error(`🤖 ${reply.substring(0, 100)}${reply.length > 100 ? "…" : ""}`);
   } catch (err) {
-    console.error(`❌ [${from}] ${err.message}`);
+    console.error(`❌ [${phone}] ${err.message}`);
     await wa.sock.sendPresenceUpdate("paused", msg.jid).catch(() => {});
     const errMsg = media
       ? "⚠️ Sorry, I couldn't process your media right now. Please try again in a moment! 🙏"
@@ -87,8 +134,19 @@ async function main() {
   // Start admin control server
   startControlServer(wa);
 
-  wa.on("connected", (number) => {
+  wa.on("connected", async (number) => {
     console.error(`✅ Connected as +${number} — bot is live! 🍦\n`);
+
+    // Eagerly resolve LIDs for all whitelisted numbers so the first message works
+    const phones = getWhitelist();
+    if (phones.length) {
+      console.error(`🔍 Resolving LIDs for ${phones.length} whitelisted number(s)…`);
+      for (const p of phones) {
+        await wa.resolvePhoneToLid(p);
+        await new Promise((r) => setTimeout(r, 400)); // stay under WA rate limit
+      }
+      console.error("✅ LID resolution done");
+    }
   });
 
   wa.on("message", (msg) => handleMessage(wa, msg));

@@ -38,9 +38,15 @@ services:
     rootDir: whatsapp-mcp
     buildCommand: npm install
     startCommand: node src/bot.js
-    plan: free
+    plan: starter
     healthCheckPath: /api/status
+    disk:
+      name: bot-persistent-data
+      mountPath: /data
+      sizeGB: 1
     envVars:
+      - key: DATA_ROOT
+        value: /data
       - key: BACKEND_API_URL
         value: https://amudhu-api.onrender.com
       - key: GEMINI_API_KEYS
@@ -51,6 +57,14 @@ services:
         value: sk-3540895271e64f88abfc99029bd6d6b0
       - key: DEEPSEEK_MODEL
         value: deepseek-chat
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_TEXT_MODEL
+        value: gpt-4.1-nano
+      - key: CLAUDE_API_KEY
+        sync: false
+      - key: CLAUDE_MODEL
+        value: claude-haiku-4-5-20251001
       - key: BOT_SERVER_PORT
         value: "7998"
       - key: ADMIN_ORIGINS

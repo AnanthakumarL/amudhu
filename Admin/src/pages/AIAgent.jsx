@@ -3,7 +3,8 @@ import {
   Bot, Wifi, WifiOff, QrCode, RefreshCw, LogOut, Send,
   MessageSquare, Users, Coins, TrendingUp, ChevronRight,
   X, Clock, Zap, IndianRupee, AlertCircle, CheckCircle2,
-  Loader2, ArrowLeft, Trash2
+  Loader2, ArrowLeft, Trash2, Sparkles, Settings2, ShieldCheck, Plus, Phone,
+  Radio, Image, Video, FileText, Link, Upload, CheckCheck
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import toast from 'react-hot-toast';
@@ -215,6 +216,552 @@ const ChatDrawer = ({ phone, onClose, onSend }) => {
   );
 };
 
+// ── Broadcast Modal ───────────────────────────────────────────────────────────
+const MSG_TYPES = [
+  { id: 'text',     label: 'Text',     icon: MessageSquare },
+  { id: 'image',    label: 'Image',    icon: Image         },
+  { id: 'video',    label: 'Video',    icon: Video         },
+  { id: 'document', label: 'Document', icon: FileText      },
+];
+
+const ACCEPT = {
+  image:    'image/*',
+  video:    'video/*',
+  document: 'application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.zip',
+};
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload  = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+const BroadcastModal = ({ onClose, whitelist, botOnline }) => {
+  const [type,    setType]    = useState('text');
+  const [text,    setText]    = useState('');
+  const [file,    setFile]    = useState(null);      // File object
+  const [preview, setPreview] = useState(null);      // object URL for image/video
+  const [sending, setSending] = useState(false);
+  const [result,  setResult]  = useState(null);      // { sent, failed, results }
+  const fileRef = useRef(null);
+
+  const recipientCount = whitelist.length;
+
+  const handleFile = (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setFile(f);
+    if (type === 'image' || type === 'video') {
+      setPreview(URL.createObjectURL(f));
+    } else {
+      setPreview(null);
+    }
+  };
+
+  const handleTypeChange = (t) => {
+    setType(t);
+    setFile(null);
+    setPreview(null);
+    if (fileRef.current) fileRef.current.value = '';
+  };
+
+  const handleSend = async () => {
+    if (type === 'text' && !text.trim()) return toast.error('Enter a message');
+    if (type !== 'text' && !file) return toast.error('Select a file to send');
+    if (!recipientCount) return toast.error('No allowed users configured');
+
+    setSending(true);
+    setResult(null);
+    try {
+      const body = { type, text: text.trim() };
+
+      if (file) {
+        body.mediaBase64 = await fileToBase64(file);
+        body.mimeType    = file.type;
+        body.fileName    = file.name;
+      }
+
+      const r = await botFetch('/api/broadcast', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+      const d = await r.json();
+      if (!r.ok) { toast.error(d.error || 'Broadcast failed'); return; }
+      setResult(d);
+      toast.success(`Sent to ${d.sent} of ${d.total} users`);
+    } catch {
+      toast.error('Bot server not reachable');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
+
+      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg flex flex-col max-h-[90vh] overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-dark-100 flex-shrink-0">
+          <div className="w-9 h-9 rounded-xl bg-violet-100 flex items-center justify-center">
+            <Radio size={18} className="text-violet-600" />
+          </div>
+          <div className="flex-1">
+            <h2 className="font-semibold text-dark-900">Broadcast Message</h2>
+            <p className="text-xs text-dark-400">
+              Send to {recipientCount} allowed {recipientCount === 1 ? 'user' : 'users'}
+            </p>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-dark-50 text-dark-400">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="overflow-y-auto flex-1 px-6 py-5 space-y-5">
+          {/* Recipient info */}
+          {recipientCount === 0 ? (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center gap-2 text-sm text-amber-700">
+              <AlertCircle size={16} className="flex-shrink-0" />
+              No allowed users configured. Add numbers in the Allowed Users tab first.
+            </div>
+          ) : (
+            <div className="bg-violet-50 border border-violet-200 rounded-xl p-3 flex items-center gap-2 text-sm text-violet-700">
+              <CheckCircle2 size={16} className="flex-shrink-0" />
+              Will be sent to <strong>{recipientCount}</strong> number{recipientCount > 1 ? 's' : ''} with 0.6s delay between each.
+            </div>
+          )}
+
+          {/* Message type selector */}
+          <div>
+            <p className="text-xs font-medium text-dark-500 uppercase tracking-wider mb-2">Message Type</p>
+            <div className="grid grid-cols-4 gap-2">
+              {MSG_TYPES.map(({ id, label, icon: Icon }) => (
+                <button
+                  key={id}
+                  onClick={() => handleTypeChange(id)}
+                  className={clsx(
+                    'flex flex-col items-center gap-1.5 py-3 rounded-xl border-2 text-xs font-medium transition-all',
+                    type === id
+                      ? 'border-violet-400 bg-violet-50 text-violet-700'
+                      : 'border-dark-100 text-dark-500 hover:border-dark-200 hover:bg-dark-50'
+                  )}
+                >
+                  <Icon size={18} />
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* File picker (non-text types) */}
+          {type !== 'text' && (
+            <div>
+              <p className="text-xs font-medium text-dark-500 uppercase tracking-wider mb-2">
+                {type === 'image' ? 'Image' : type === 'video' ? 'Video' : 'Document'} File
+              </p>
+              <div
+                onClick={() => fileRef.current?.click()}
+                className={clsx(
+                  'border-2 border-dashed rounded-xl p-4 cursor-pointer transition-colors text-center',
+                  file ? 'border-violet-300 bg-violet-50' : 'border-dark-200 hover:border-violet-300 hover:bg-violet-50/40'
+                )}
+              >
+                {/* Preview */}
+                {preview && type === 'image' && (
+                  <img src={preview} alt="preview" className="max-h-40 mx-auto rounded-lg mb-3 object-contain" />
+                )}
+                {preview && type === 'video' && (
+                  <video src={preview} className="max-h-40 mx-auto rounded-lg mb-3" controls />
+                )}
+
+                {file ? (
+                  <div className="flex items-center justify-center gap-2 text-sm text-violet-700">
+                    <CheckCircle2 size={16} />
+                    <span className="font-medium truncate max-w-xs">{file.name}</span>
+                    <span className="text-xs text-dark-400">({(file.size / 1024).toFixed(0)} KB)</span>
+                  </div>
+                ) : (
+                  <div className="text-dark-400">
+                    <Upload size={24} className="mx-auto mb-1.5 opacity-50" />
+                    <p className="text-sm">Click to select {type}</p>
+                    <p className="text-xs mt-0.5 opacity-60">
+                      {type === 'image' ? 'JPG, PNG, GIF, WebP' : type === 'video' ? 'MP4, MOV, AVI' : 'PDF, DOC, XLS, TXT…'}
+                    </p>
+                  </div>
+                )}
+              </div>
+              <input
+                ref={fileRef}
+                type="file"
+                accept={ACCEPT[type] || '*'}
+                onChange={handleFile}
+                className="hidden"
+              />
+            </div>
+          )}
+
+          {/* Text / caption */}
+          <div>
+            <p className="text-xs font-medium text-dark-500 uppercase tracking-wider mb-2">
+              {type === 'text' ? 'Message' : 'Caption (optional)'}
+            </p>
+            <textarea
+              className="w-full border border-dark-200 rounded-xl px-4 py-3 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-violet-500"
+              rows={type === 'text' ? 4 : 2}
+              placeholder={type === 'text' ? 'Type your message…' : 'Add a caption…'}
+              value={text}
+              onChange={e => setText(e.target.value)}
+            />
+          </div>
+
+          {/* Result */}
+          {result && (
+            <div className="rounded-xl border border-dark-100 overflow-hidden">
+              <div className="px-4 py-3 bg-dark-50 flex items-center gap-3 border-b border-dark-100">
+                <CheckCheck size={16} className="text-green-600" />
+                <p className="text-sm font-medium text-dark-900">
+                  Sent {result.sent}/{result.total} &nbsp;·&nbsp;
+                  <span className="text-red-600">{result.failed} failed</span>
+                </p>
+              </div>
+              <div className="divide-y divide-dark-50 max-h-40 overflow-y-auto">
+                {result.results.map((r) => (
+                  <div key={r.phone} className="flex items-center gap-3 px-4 py-2 text-sm">
+                    {r.success
+                      ? <CheckCircle2 size={14} className="text-green-500 flex-shrink-0" />
+                      : <AlertCircle  size={14} className="text-red-500   flex-shrink-0" />}
+                    <span className="text-dark-700">+91 {r.phone.slice(-10)}</span>
+                    {!r.success && <span className="text-xs text-red-400 ml-auto truncate max-w-[180px]">{r.error}</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-6 py-4 border-t border-dark-100 flex items-center justify-between gap-3 flex-shrink-0 bg-white">
+          <button onClick={onClose} className="px-4 py-2.5 rounded-xl border border-dark-200 text-dark-600 hover:bg-dark-50 text-sm font-medium transition-colors">
+            {result ? 'Close' : 'Cancel'}
+          </button>
+          {!result && (
+            <button
+              onClick={handleSend}
+              disabled={sending || !botOnline || !recipientCount}
+              className="flex-1 flex items-center justify-center gap-2 px-5 py-2.5 bg-violet-600 text-white rounded-xl hover:bg-violet-700 disabled:opacity-50 text-sm font-medium transition-colors"
+            >
+              {sending ? (
+                <><Loader2 size={16} className="animate-spin" /> Sending…</>
+              ) : (
+                <><Radio size={16} /> Send to {recipientCount} {recipientCount === 1 ? 'user' : 'users'}</>
+              )}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ── Allowed Users panel ───────────────────────────────────────────────────────
+const AllowedUsers = ({ botOnline }) => {
+  const [list, setList] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [input, setInput] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [removing, setRemoving] = useState(null);
+
+  const load = useCallback(async () => {
+    try {
+      const r = await botFetch('/api/whitelist');
+      if (r.ok) setList(await r.json());
+    } catch { /* ignore */ } finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleAdd = async () => {
+    const raw = input.replace(/\D/g, '');
+    // Normalize: strip leading 91 if 12-digit Indian format → keep last 10
+    const phone = raw.length === 12 && raw.startsWith('91') ? raw.slice(2) : raw.slice(-10);
+    if (phone.length !== 10) return toast.error('Enter a valid 10-digit mobile number');
+    setAdding(true);
+    try {
+      const r = await botFetch('/api/whitelist', { method: 'POST', body: JSON.stringify({ phone }) });
+      if (r.ok) {
+        toast.success(`+${phone} added to allowed list`);
+        setInput('');
+        load();
+      } else {
+        const d = await r.json();
+        toast.error(d.error || 'Failed to add');
+      }
+    } catch { toast.error('Bot server not reachable'); }
+    finally { setAdding(false); }
+  };
+
+  const handleRemove = async (phone) => {
+    if (!confirm(`Remove +${phone} from allowed list?`)) return;
+    setRemoving(phone);
+    try {
+      const r = await botFetch(`/api/whitelist/${phone}`, { method: 'DELETE' });
+      if (r.ok) { toast.success('Number removed'); load(); }
+      else toast.error('Failed to remove');
+    } catch { toast.error('Bot server not reachable'); }
+    finally { setRemoving(null); }
+  };
+
+  return (
+    <div className="space-y-5">
+      {/* Info banner */}
+      <div className="bg-violet-50 border border-violet-200 rounded-2xl p-4 flex items-start gap-3">
+        <ShieldCheck size={20} className="text-violet-600 flex-shrink-0 mt-0.5" />
+        <div>
+          <p className="font-medium text-violet-800">Phone Number Whitelist</p>
+          <p className="text-sm text-violet-600 mt-0.5">
+            The AI will <strong>only reply</strong> to numbers in this list. Group messages are always ignored.
+            {list.length === 0 && <span className="block mt-1 text-amber-600 font-medium">⚠️ No numbers added yet — the bot is currently replying to everyone.</span>}
+          </p>
+        </div>
+      </div>
+
+      {/* Add number */}
+      <div className="bg-white rounded-2xl border border-dark-100 p-5">
+        <h2 className="font-semibold text-dark-900 mb-4 flex items-center gap-2">
+          <Plus size={17} className="text-violet-600" /> Add Allowed Number
+        </h2>
+        <div className="flex gap-2">
+          <div className="relative flex-1">
+            <Phone size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-dark-400" />
+            <input
+              className="w-full pl-9 pr-4 py-2.5 border border-dark-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
+              placeholder="e.g. 9876543210  (10-digit mobile number)"
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleAdd()}
+              disabled={!botOnline}
+            />
+          </div>
+          <button
+            onClick={handleAdd}
+            disabled={adding || !input.trim() || !botOnline}
+            className="px-5 py-2.5 bg-violet-600 text-white rounded-xl hover:bg-violet-700 disabled:opacity-50 flex items-center gap-2 text-sm font-medium transition-colors"
+          >
+            {adding ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />}
+            Add
+          </button>
+        </div>
+        {!botOnline && (
+          <p className="text-xs text-amber-600 mt-2">Bot server offline — changes won't apply until reconnected.</p>
+        )}
+      </div>
+
+      {/* List */}
+      <div className="bg-white rounded-2xl border border-dark-100 overflow-hidden">
+        <div className="px-5 py-4 border-b border-dark-100 flex items-center justify-between">
+          <h2 className="font-semibold text-dark-900">Allowed Numbers</h2>
+          <span className="text-xs text-dark-400">{list.length} {list.length === 1 ? 'number' : 'numbers'}</span>
+        </div>
+        {loading ? (
+          <div className="py-10 flex items-center justify-center">
+            <Loader2 className="animate-spin text-violet-500" size={24} />
+          </div>
+        ) : list.length === 0 ? (
+          <div className="py-12 text-center text-dark-400">
+            <ShieldCheck size={32} className="mx-auto mb-2 opacity-30" />
+            <p className="text-sm">No numbers added — bot replies to everyone</p>
+          </div>
+        ) : (
+          <div className="divide-y divide-dark-50">
+            {list.map((phone) => (
+              <div key={phone} className="flex items-center gap-4 px-5 py-4">
+                <div className="w-9 h-9 rounded-full bg-green-100 flex items-center justify-center flex-shrink-0">
+                  <Phone size={16} className="text-green-600" />
+                </div>
+                <div className="flex-1">
+                  <p className="font-medium text-dark-900">+91 {phone.slice(-10)}</p>
+                  <p className="text-xs text-dark-400">AI replies enabled</p>
+                </div>
+                <button
+                  onClick={() => handleRemove(phone)}
+                  disabled={removing === phone}
+                  className="p-2 rounded-lg hover:bg-red-50 text-dark-400 hover:text-red-600 transition-colors disabled:opacity-50"
+                  title="Remove"
+                >
+                  {removing === phone ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ── Provider config ───────────────────────────────────────────────────────────
+const PROVIDERS = [
+  {
+    id: 'auto',
+    label: 'Auto',
+    desc: 'Smart fallback chain: GPT → Gemini → DeepSeek → Claude',
+    color: 'violet',
+    icon: '⚡',
+  },
+  {
+    id: 'deepseek',
+    label: 'DeepSeek',
+    desc: 'Best for text & tool use. No media support.',
+    color: 'blue',
+    icon: '🔵',
+  },
+  {
+    id: 'gemini',
+    label: 'Gemini',
+    desc: 'Best for images & voice. Full tool support.',
+    color: 'green',
+    icon: '🟢',
+  },
+  {
+    id: 'claude',
+    label: 'Claude',
+    desc: 'Lightweight fallback. Token-limited per request.',
+    color: 'orange',
+    icon: '🟠',
+  },
+  {
+    id: 'gpt',
+    label: 'GPT',
+    desc: 'gpt-5-nano for text & images, gpt-4o-audio-preview for voice.',
+    color: 'pink',
+    icon: '🩷',
+  },
+];
+
+const providerColors = {
+  violet: { card: 'border-violet-400 bg-violet-50', badge: 'bg-violet-100 text-violet-700', ring: 'ring-violet-400' },
+  blue:   { card: 'border-blue-400   bg-blue-50',   badge: 'bg-blue-100   text-blue-700',   ring: 'ring-blue-400'   },
+  green:  { card: 'border-green-400  bg-green-50',  badge: 'bg-green-100  text-green-700',  ring: 'ring-green-400'  },
+  orange: { card: 'border-orange-400 bg-orange-50', badge: 'bg-orange-100 text-orange-700', ring: 'ring-orange-400' },
+  pink:   { card: 'border-pink-400   bg-pink-50',   badge: 'bg-pink-100   text-pink-700',   ring: 'ring-pink-400'   },
+};
+
+// ── Model Selector ────────────────────────────────────────────────────────────
+const ModelSelector = ({ currentProvider, onProviderChange, botOnline }) => {
+  const [saving, setSaving]           = useState(false);
+  const [gptModels, setGptModels]     = useState([]);
+  const [currentGptModel, setCurrentGptModel] = useState('gpt-4.1-nano');
+  const [gptModelSaving, setGptModelSaving]   = useState(false);
+
+  useEffect(() => {
+    botFetch('/api/gpt-model').then(r => r.json()).then(d => {
+      if (d.models) setGptModels(d.models);
+      if (d.model)  setCurrentGptModel(d.model);
+    }).catch(() => {});
+  }, [botOnline]);
+
+  const handleGptModelChange = async (model) => {
+    if (!botOnline || model === currentGptModel) return;
+    setGptModelSaving(true);
+    try {
+      const r = await botFetch('/api/gpt-model', { method: 'POST', body: JSON.stringify({ model }) });
+      if (r.ok) { setCurrentGptModel(model); toast.success(`GPT model → ${model}`); }
+      else toast.error('Failed to change GPT model');
+    } catch { toast.error('Bot server not reachable'); }
+    finally { setGptModelSaving(false); }
+  };
+
+  const handleSelect = async (id) => {
+    if (id === currentProvider || !botOnline) return;
+    setSaving(true);
+    try {
+      const r = await botFetch('/api/provider', {
+        method: 'POST',
+        body: JSON.stringify({ provider: id }),
+      });
+      if (r.ok) {
+        onProviderChange(id);
+        toast.success(`AI model switched to ${PROVIDERS.find(p => p.id === id)?.label}`);
+      } else {
+        const d = await r.json();
+        toast.error(d.error || 'Failed to switch model');
+      }
+    } catch {
+      toast.error('Bot server not reachable');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="bg-white rounded-2xl border border-dark-100 p-5">
+      <div className="flex items-center gap-2 mb-4">
+        <Settings2 size={18} className="text-violet-600" />
+        <h2 className="font-semibold text-dark-900">AI Model Control</h2>
+        {saving && <Loader2 size={14} className="animate-spin text-dark-400 ml-1" />}
+        {!botOnline && (
+          <span className="ml-auto text-xs text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
+            Bot offline — changes won't apply
+          </span>
+        )}
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+        {PROVIDERS.map((p) => {
+          const isActive = currentProvider === p.id;
+          const c = providerColors[p.color];
+          return (
+            <button
+              key={p.id}
+              onClick={() => handleSelect(p.id)}
+              disabled={saving}
+              className={clsx(
+                'relative text-left rounded-xl border-2 p-4 transition-all focus:outline-none',
+                isActive
+                  ? `${c.card} ${c.ring} ring-2`
+                  : 'border-dark-100 bg-white hover:border-dark-200 hover:bg-dark-50/40',
+                saving && 'opacity-60 cursor-not-allowed'
+              )}
+            >
+              {isActive && (
+                <span className={clsx('absolute top-2 right-2 text-xs font-semibold px-2 py-0.5 rounded-full', c.badge)}>
+                  Active
+                </span>
+              )}
+              <div className="text-2xl mb-2">{p.icon}</div>
+              <p className={clsx('font-semibold text-sm', isActive ? 'text-dark-900' : 'text-dark-700')}>
+                {p.label}
+              </p>
+              <p className="text-xs text-dark-400 mt-0.5 leading-snug">{p.desc}</p>
+              {p.id === 'gpt' && gptModels.length > 0 && (
+                <div
+                  className="mt-3"
+                  onClick={e => e.stopPropagation()}
+                >
+                  <label className="text-xs text-dark-500 font-medium block mb-1">Model</label>
+                  <select
+                    value={currentGptModel}
+                    onChange={e => handleGptModelChange(e.target.value)}
+                    disabled={gptModelSaving || !botOnline}
+                    className="w-full text-xs border border-dark-200 rounded-lg px-2 py-1.5 bg-white text-dark-800 focus:outline-none focus:ring-1 focus:ring-pink-400 disabled:opacity-50"
+                  >
+                    {gptModels.map(m => (
+                      <option key={m.id} value={m.id}>{m.label}</option>
+                    ))}
+                  </select>
+                  {gptModelSaving && <p className="text-xs text-pink-500 mt-1">Saving…</p>}
+                </div>
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function AIAgent() {
   const [status, setStatus] = useState(null);
@@ -223,7 +770,10 @@ export default function AIAgent() {
   const [users, setUsers] = useState([]);
   const [selectedPhone, setSelectedPhone] = useState(null);
   const [loadingLogout, setLoadingLogout] = useState(false);
-  const [tab, setTab] = useState('overview'); // 'overview' | 'chats'
+  const [tab, setTab] = useState('overview'); // 'overview' | 'chats' | 'allowed'
+  const [showBroadcast, setShowBroadcast] = useState(false);
+  const [whitelist, setWhitelist] = useState([]);
+  const [currentProvider, setCurrentProvider] = useState('auto');
 
   const pollRef = useRef(null);
   const statusRef = useRef(status);
@@ -235,6 +785,13 @@ export default function AIAgent() {
       if (r.ok) setStatus(await r.json());
       else setStatus(null);
     } catch { setStatus(null); }
+  }, []);
+
+  const fetchProvider = useCallback(async () => {
+    try {
+      const r = await botFetch('/api/provider');
+      if (r.ok) { const d = await r.json(); setCurrentProvider(d.provider || 'auto'); }
+    } catch { /* ignore */ }
   }, []);
 
   const fetchQr = useCallback(async () => {
@@ -258,11 +815,20 @@ export default function AIAgent() {
     } catch { /* ignore */ }
   }, []);
 
+  const fetchWhitelist = useCallback(async () => {
+    try {
+      const r = await botFetch('/api/whitelist');
+      if (r.ok) setWhitelist(await r.json());
+    } catch { /* ignore */ }
+  }, []);
+
   const refresh = useCallback(() => {
     fetchStatus();
     fetchQr();
     fetchAnalytics();
-  }, [fetchStatus, fetchQr, fetchAnalytics]);
+    fetchProvider();
+    fetchWhitelist();
+  }, [fetchStatus, fetchQr, fetchAnalytics, fetchProvider, fetchWhitelist]);
 
   // Poll fast (1s) when waiting for QR or disconnected, slow (6s) when connected
   useEffect(() => {
@@ -383,15 +949,16 @@ export default function AIAgent() {
             <p className="font-medium text-green-800">WhatsApp Connected</p>
             <p className="text-sm text-green-600">Active number: <strong>{status.phoneNumber}</strong></p>
           </div>
-          <div className="ml-auto text-sm text-green-600">
-            AI: <strong>{status.ai?.gemini?.currentModel || 'Gemini'}</strong>
+          <div className="ml-auto text-sm text-green-600 flex items-center gap-1.5">
+            <Sparkles size={14} />
+            AI: <strong className="capitalize">{currentProvider}</strong>
           </div>
         </div>
       )}
 
       {/* ── Tabs ── */}
       <div className="flex gap-1 bg-dark-50 rounded-xl p-1 w-fit">
-        {[['overview', TrendingUp, 'Overview'], ['chats', MessageSquare, 'Chat Logs']].map(([key, Icon, label]) => (
+        {[['overview', TrendingUp, 'Overview'], ['chats', MessageSquare, 'Chat Logs'], ['allowed', ShieldCheck, 'Allowed Users']].map(([key, Icon, label]) => (
           <button
             key={key}
             onClick={() => setTab(key)}
@@ -408,6 +975,13 @@ export default function AIAgent() {
       {/* ── Overview tab ── */}
       {tab === 'overview' && (
         <div className="space-y-6">
+          {/* Model selector */}
+          <ModelSelector
+            currentProvider={currentProvider}
+            onProviderChange={setCurrentProvider}
+            botOnline={botOnline}
+          />
+
           {/* Stats */}
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
             <StatCard icon={Users}       color="violet" label="Total Users"    value={formatNumber(analytics?.totalUsers)}   sub="unique WhatsApp numbers" />
@@ -471,9 +1045,18 @@ export default function AIAgent() {
       {/* ── Chat Logs tab ── */}
       {tab === 'chats' && (
         <div className="bg-white rounded-2xl border border-dark-100 overflow-hidden">
-          <div className="px-5 py-4 border-b border-dark-100">
-            <h2 className="font-semibold text-dark-900">Chat Logs</h2>
-            <p className="text-xs text-dark-400 mt-0.5">Click a user to view their full conversation with token + cost breakdown</p>
+          <div className="px-5 py-4 border-b border-dark-100 flex items-center justify-between gap-3">
+            <div>
+              <h2 className="font-semibold text-dark-900">Chat Logs</h2>
+              <p className="text-xs text-dark-400 mt-0.5">Click a user to view their full conversation with token + cost breakdown</p>
+            </div>
+            <button
+              onClick={() => setShowBroadcast(true)}
+              disabled={!botOnline}
+              className="flex items-center gap-2 px-4 py-2 bg-violet-600 text-white rounded-xl hover:bg-violet-700 disabled:opacity-50 text-sm font-medium transition-colors flex-shrink-0"
+            >
+              <Radio size={15} /> Broadcast
+            </button>
           </div>
           {users.length === 0 ? (
             <div className="py-12 text-center text-dark-400">
@@ -514,6 +1097,18 @@ export default function AIAgent() {
             </div>
           )}
         </div>
+      )}
+
+      {/* ── Allowed Users tab ── */}
+      {tab === 'allowed' && <AllowedUsers botOnline={botOnline} />}
+
+      {/* ── Broadcast modal ── */}
+      {showBroadcast && (
+        <BroadcastModal
+          onClose={() => setShowBroadcast(false)}
+          whitelist={whitelist}
+          botOnline={botOnline}
+        />
       )}
 
       {/* ── Chat drawer ── */}

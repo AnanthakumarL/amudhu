@@ -1,5 +1,18 @@
-# Root-only local virtual environment
+# Python
 .venv/
+__pycache__/
+*.pyc
 
-# Environment files (keep *.example checked in)
+# Environment files — never commit secrets
 .env
+.env.local
+.env.production
+**/node_modules/
+
+# WhatsApp bot runtime data — stored on persistent disk in production
+whatsapp-mcp/auth_info/
+whatsapp-mcp/data/
+
+# Build output
+**/dist/
+**/.next/

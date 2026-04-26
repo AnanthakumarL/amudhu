@@ -1,5 +1,6 @@
 """PostgreSQL database engine and session factory (SQLAlchemy)."""
 from __future__ import annotations
+import re
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
@@ -11,11 +12,14 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 settings = get_settings()
 
+# Rewrite the URL to use pg8000 (pure-Python driver, no DLL required).
+# Replace postgresql:// or postgresql+psycopg2:// → postgresql+pg8000://
+_url = re.sub(r"^postgresql(\+psycopg2)?://", "postgresql+pg8000://", settings.DATABASE_URL)
+
 # Use NullPool when connecting via Supabase pgbouncer/pooler (port 6543)
-# to avoid "prepared statement does not exist" errors
-_use_nullpool = ":6543" in settings.DATABASE_URL
+_use_nullpool = ":6543" in _url
 engine = create_engine(
-    settings.DATABASE_URL,
+    _url,
     pool_pre_ping=True,
     **({"poolclass": NullPool} if _use_nullpool else {"pool_size": 10, "max_overflow": 20}),
 )
