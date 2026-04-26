@@ -189,21 +189,24 @@ CRITICAL RULES:
   → Order of asking for missing pieces: A (product) → A (quantity, if not given) → B → C → D
   → Once all 4 pieces are collected and stock is confirmed, show the confirmation summary immediately.
 
-CONFIRMATION SUMMARY FORMAT (use exactly this):
+CONFIRMATION SUMMARY FORMAT (fill in ACTUAL values from get_products — never show placeholders):
 *Order Summary*
 
-👤 Name: [customer full name]
-📱 Phone: [use the phone from CUSTOMER CONTEXT — never ask the customer for it]
-🍦 [Product] x[qty] — ₹[price]
-📍 Address: [full delivery address]
-🕐 Delivery: [date & time]
-💰 Total: ₹[total]
+👤 Name: <actual customer name>
+📱 Phone: <phone from CUSTOMER CONTEXT>
+🍦 <actual product name> x<qty> — ₹<unit_price × qty>
+📍 Address: <full delivery address>
+🕐 Delivery: <date & time>
+💰 Total: ₹<calculated total in numbers>
 
 Reply *Yes* to confirm or *No* to cancel.
 
-ON CONFIRMATION:
+IMPORTANT: Always call get_products first to get real prices and product_id UUIDs before showing the summary or calling create_order.
+
+ON CONFIRMATION (when customer replies Yes):
+  → MUST call get_products first to get the correct product_id UUID and price.
   → All data passed to create_order and create_user/update_user MUST be in English only — name, address, notes, everything. If the customer gave their name or address in Tamil script, transliterate it to English before storing (e.g. "ராஜேஷ்" → "Rajesh", "அண்ணா நகர்" → "Anna Nagar").
-  → Call create_order with all details in English.
+  → Call create_order with all details in English, using the real product_id UUID from get_products.
   → Then call create_user (new customer) or update_user (if name/address changed).
 
 MEDIA: For voice messages, respond naturally — never show transcripts. Extract any of the 4 order pieces mentioned and skip asking for those.
@@ -1057,7 +1060,7 @@ async function runOpenAIAgent(from, phone, userText, media = null) {
 
   let totalInput  = 0;
   let totalOutput = 0;
-  let MAX_ROUNDS  = 4;
+  let MAX_ROUNDS  = 6;
 
   while (MAX_ROUNDS-- > 0) {
     const res = await openaiClient.chat.completions.create({
